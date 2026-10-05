@@ -19,6 +19,8 @@ export type IdempotencyClaimResult =
 /**
  * Puerto de idempotencia. La operación `claim` debe ser atómica (check-and-set) para evitar
  * la ventana de carrera entre comprobar y guardar bajo peticiones concurrentes.
+ * Transversal: al separar en microservicios, **cada servicio con endpoints idempotentes tiene su propia
+ * tabla de claves** (offers, bookings y post-sale), o se usa un Redis compartido con prefijo por servicio.
  */
 export interface IdempotencyStorePort {
   claim(key: string, requestFingerprint: string): Promise<IdempotencyClaimResult>;

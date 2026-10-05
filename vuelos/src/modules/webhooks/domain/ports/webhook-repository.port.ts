@@ -7,6 +7,7 @@ export interface WebhookSubscriptionRecord extends WebhookSubscriptionDto {
   ownerId: string;
 }
 
+/** Puerto de persistencia de suscripciones. **Base de datos futura: `webhooks`**. Privado de webhooks. */
 export interface WebhookRepositoryPort {
   findAllByOwner(ownerId: string): Promise<WebhookSubscriptionRecord[]>;
   create(subscription: WebhookSubscriptionRecord): Promise<WebhookSubscriptionRecord>;

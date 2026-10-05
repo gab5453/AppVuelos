@@ -20,7 +20,11 @@ export interface HoldRecord {
 
 export const HOLD_REPOSITORY_PORT = Symbol('HOLD_REPOSITORY_PORT');
 
-/** Puerto de persistencia de holds. Hoy resuelto en memoria; reemplazar por el GDS/DB real. */
+/**
+ * Puerto de persistencia de holds. **Base de datos futura: `offers`** (holds: oferta, tarifas, pasajeros,
+ * precio congelado y estado). Privado de offers; bookings consume holds solo mediante `HoldService`.
+ * Hoy resuelto en memoria; reemplazar por el GDS/DB real.
+ */
 export interface HoldRepositoryPort {
   create(record: HoldRecord): Promise<HoldRecord>;
   findById(holdId: string): Promise<HoldRecord | undefined>;

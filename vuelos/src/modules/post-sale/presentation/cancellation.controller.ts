@@ -5,7 +5,7 @@ import { Scopes } from '../../../common/auth/decorators/scopes.decorator.js';
 import { IdempotencyInterceptor } from '../../../common/idempotency/idempotency.interceptor.js';
 import { BookingOwnershipGuard } from '../../bookings/presentation/guards/booking-ownership.guard.js';
 import { CurrentBooking } from '../../bookings/presentation/decorators/current-booking.decorator.js';
-import type { BookingRecord } from '../../bookings/domain/ports/booking-repository.port.js';
+import type { BookingSnapshot } from '../../bookings/application/bookings.facade.js';
 import { CancellationService } from '../application/cancellation.service.js';
 import { CancelBookingRequestDto } from './dto/cancellation.dto.js';
 import type { CancellationQuoteResponseDto } from './dto/cancellation.dto.js';
@@ -17,7 +17,7 @@ export class CancellationController {
 
   @Get('cancellation-quote')
   @Scopes('flights:read')
-  getQuote(@CurrentBooking() booking: BookingRecord): Promise<CancellationQuoteResponseDto> {
+  getQuote(@CurrentBooking() booking: BookingSnapshot): Promise<CancellationQuoteResponseDto> {
     return this.cancellationService.getQuote(booking);
   }
 
@@ -26,7 +26,7 @@ export class CancellationController {
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   cancel(
-    @CurrentBooking() booking: BookingRecord,
+    @CurrentBooking() booking: BookingSnapshot,
     @Body() body: CancelBookingRequestDto,
   ): Promise<void> {
     return this.cancellationService.cancel(booking, body);

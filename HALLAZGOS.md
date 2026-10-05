@@ -1,239 +1,204 @@
-# HALLAZGOS — Inconsistencias y decisiones pendientes del contrato
+# HALLAZGOS — AppVuelos (EcoAirlines)
 
-> Fuente: `vuelos/contract/vuelos-openapi.yaml` (v1.5.0.0). **El contrato NO se ha modificado.**
-> Cada hallazgo indica qué se hará mientras tanto (**acción provisional**) sin romper el contrato.
-> Completar la columna **Decisión** tras conversarlo con el líder de booking.
+> **Versión 1 · revisado el 2026-10-04 contra el código** (commit `adb6c48`, etiqueta `v0.1.0`).
+> Fusiona el antiguo `HALLAZGOS.md` (contrato) y `HALLAZGOS2.md` (puesta en marcha), y suma la comparación con la **plantilla del booking**
+> (`Vuelos-Integracion-Sistemas-main`) y los requisitos de **RDA1**: API REST, funcionamiento individual y despliegue en la nube (Render).
+> El contrato `vuelos/contract/vuelos-openapi.yaml` **no se modifica**. Es idéntico (mismo hash) al de la plantilla.
+>
+> **Para decidir con el líder de booking:** completar la columna *Decisión*. Las versiones anteriores de este archivo y de
+> `HALLAZGOS2.md` están en el historial de git (`git show adb6c48:HALLAZGOS.md`).
 
-| ID | Tema | Severidad | Requiere decisión | Decisión |
-|----|------|-----------|-------------------|----------|
-| HALL-01 | Prefijo `/flights/v1` | Media | Sí | |
-| HALL-02 | 401 no documentado | Media | Sí | |
-| HALL-03 | Login para el frontend | Alta | Sí | ✅ Permitido si no infringe el contrato → opción (a), `dev-auth` separado |
-| HALL-04 | Strings sin límites ni formato | Media | Sí | |
-| HALL-05 | Enum `code` incompleto | Media | Sí | |
-| HALL-06 | `201` vs `PENDING` en reservas | Media | Sí | |
-| HALL-07 | `cabinClass` libre en HoldRequest | Baja | Sí | |
-| HALL-08 | SSRF en URL de webhooks | Alta | Sí | |
-| HALL-09 | `secret` del webhook devuelto en respuestas | Alta | Sí | |
-| HALL-10 | Nombre de marca del frontend | Baja | Sí | ✅ "EcoAirlines" |
-| HALL-11 | 404 no documentado en varios endpoints | Media | Sí | |
-| HALL-12 | Check-in sin `Idempotency-Key` | Baja | Informativo | |
-| HALL-13 | Respuestas sin body definido | Baja | Informativo | |
-| HALL-14 | Inconsistencias menores de schemas | Baja | Informativo | |
-| HALL-15 | `413`/`415` no documentados (se usa `400`) | Baja | Sí | |
-| HALL-16 | `429` solo documentado en 2 endpoints | Media | Sí | |
-| HALL-17 | Header `X-Request-Id` no documentado | Baja | Informativo | |
-| HALL-18 | Cotización vencida en `/cancel`: `410` no documentado | Media | Sí | |
-| HALL-19 | `POST /bookings` sin `404`: hold inexistente → `422` | Media | Sí | |
-| HALL-20 | Errores de posventa no documentados | Media | Sí | |
-| HALL-21 | `DateChangeRequest.assignedSeats` sin `passengerId` | Media | Sí | |
-| HALL-22 | Arrays sin `minItems` en el contrato | Baja | Sí | |
-| HALL-23 | Significado de `totalBaggage` | Baja | Sí | |
-| HALL-24 | `PaymentReference` sin monto ni reglas de uso | Media | Sí | |
-| HALL-25 | Edades de los tipos de pasajero no definidas | Baja | Sí | |
-| HALL-26 | No hay catálogo de aeropuertos en el contrato | Baja | Informativo | |
+**Estados:** 🔴 bloquea ver, usar o desplegar · 🟠 importante · 🟡 menor · ⚪ informativo · ✅ resuelto.
+**Prefijos:** `OPS` = entorno local · `NUBE` = despliegue RDA1 · `PLT` = plantilla del booking · `HALL` = contrato · `DOC` = documentación y proceso.
 
 ---
 
-## HALL-01 — Prefijo de ruta `/flights/v1`
+## 1. Resumen y prioridades
 
-- **Contrato:** `servers` = `https://api.booking-hub.com/flights/v1`. Por OpenAPI, los paths se resuelven como `/flights/v1/search`, etc.
-- **Código actual:** la API responde en la raíz (`/search`), sin prefijo.
-- **Riesgo:** un cliente generado desde el contrato apuntando a un servidor local con `/flights/v1` fallaría.
-- **Opciones:** (a) `app.setGlobalPrefix('flights/v1')` en Nest; (b) dejarlo en la raíz y asumir que el gateway agrega el prefijo.
-- **Acción provisional:** se deja configurable con `API_PREFIX` (vacío por defecto) y Swagger usa el valor activo. **No se cambia el comportamiento por defecto sin tu aprobación.**
+| ID | Prioridad | Hallazgo | Requiere decisión | Decisión |
+|----|-----------|----------|-------------------|----------|
+| OPS-01 | 🔴 | API vieja (02/10) ocupa el puerto 3000: `/docs` da 404 | No: cerrar el proceso | |
+| OPS-02 | 🔴 | El frontend apunta por defecto al 3000 (la API vieja) | No: depende de OPS-01 | |
+| OPS-03 | 🟠 | Servicios de la sesión anterior siguen ocupando 3001, 4000 y 5173 | No: cerrarlos | |
+| NUBE-01 | 🔴 | Swagger no queda usable en la nube (apagado en producción y "Try it out" sin la URL pública) | Sí | |
+| NUBE-02 | 🔴 | Datos en memoria: en Render se pierden al reiniciar o "dormir" el servicio | Sí | |
+| NUBE-03 | 🔴 | `dev-auth` no arranca en producción y la API exige configuración de auth explícita | Sí | |
+| NUBE-04 | 🟠 | No hay `Dockerfile` ni configuración de Render; el repo es monorepo | No | |
+| PLT-01 | 🔴 | Tres rutas base distintas: contrato `/flights/v1`, plantilla `/api/v1`, código en la raíz | **Sí** | |
+| PLT-02 | 🟠 | Swagger: la plantilla usa `/api/docs`, el código `/docs` | Sí | |
+| PLT-03 | 🟠 | La plantilla usa PostgreSQL + TypeORM; el código usa memoria | Sí (ver NUBE-02) | |
+| PLT-04 | 🟡 | Los DTOs de la plantilla son más estrictos que el contrato | Informativo | |
+| PLT-05 | ⚪ | Entidad `Vuelo` y `CreateVueloDto` de la plantilla no existen en el contrato | Informativo | |
+| PLT-06 | ⚪ | Estructura interna distinta (un módulo frente a varios dominios) | Informativo | |
+| DOC-01 | 🟡 | Documentación dice "25 operaciones"; son **22** | No: corregir | |
+| DOC-02 | 🟠 | Gemini CLI no lee `AGENTS.md` por defecto | No: configurar | |
+| OPS-04 | 🟠 | `127.0.0.1:5173` no abre; solo `localhost` | No | |
+| OPS-05 | 🟠 | Si el 5173 está ocupado, Vite cambia de puerto y CORS bloquea | No | |
+| OPS-06 | 🟡 | Node 24.12 < 24.15 que piden algunas dependencias | No | |
+| HALL-01…26 | — | Inconsistencias del contrato (sección 6). 2 resueltas, 24 abiertas | Sí | ver tabla |
 
-## HALL-02 — Respuesta 401 no documentada
+---
 
-- **Contrato:** define `security: OAuth2Security` pero ningún endpoint documenta `401`. Además existe `ProblemDetails403` en `components.responses`, pero **ningún path lo referencia**.
-- **Código actual:** el guard responde `401` sin token / token inválido y `403` sin scopes (correcto según HTTP/OAuth2).
-- **Acción provisional:** se mantiene `401`/`403` (rechazar sin token es obligatorio por seguridad).
-- **Pregunta al líder:** ¿se agregará `401` y se referenciará `403` en los endpoints protegidos en la próxima versión del contrato?
+## 2. Entorno local (`OPS`) — impiden ver o usar el proyecto hoy
 
-## HALL-03 — ¿Cómo obtiene el frontend un JWT?
+### OPS-01 🔴 Una API vieja ocupa el puerto 3000 *(antes H2-01, sigue vigente)*
+- **Verificado hoy:** PID **28580**, `node dist/main.js`, iniciado el **02/10/2026 21:01**, antes de la Fase 1. Es un proceso huérfano: su terminal ya
+  se cerró. `GET /docs` → 404, `/search` → 0 ofertas, y no envía `X-Request-Id` ni cabeceras de seguridad.
+- **Impacto:** `localhost:3000/docs` no muestra Swagger y `npm run start:dev` falla con `EADDRINUSE`.
+- **Acción:** `Stop-Process -Id 28580` y luego `cd vuelos; npm run start:dev`.
 
-- **Contrato:** la autenticación pertenece a otro dominio (`auth.booking-hub.com`, flujos `authorizationCode` y `clientCredentials`). Esta API no tiene endpoint de login, y no debe tenerlo.
-- **Problema:** para que el frontend de demostración pueda reservar, necesita un token válido.
-- **Opciones:**
-  - (a) **Recomendada:** un pequeño servidor de autenticación de desarrollo **separado** (`Reto 1/dev-auth/`, fuera de la API de vuelos) que emite JWT firmados con un usuario de prueba. La API de vuelos no gana rutas nuevas.
-  - (b) Un endpoint `/_dev/token` dentro de la API, deshabilitado en producción. Agrega una ruta fuera del contrato.
-  - (c) Pegar manualmente en el frontend un token generado con `npm run token`.
-- **Acción provisional:** ninguna hasta tu decisión; mientras tanto se usa la opción (c).
-- **Decisión (2026-10-03):** permitido siempre que no infrinja el contrato. Se implementó la **opción (a)**: `Reto 1/dev-auth/`,
-  un servidor de desarrollo sin dependencias (registro, login, JWT HS256 con `sub`, `scope`, `iss`, `aud`, `exp`). La API de vuelos
-  no ganó ninguna ruta. No arranca con `NODE_ENV=production`. Los clientes finales reciben `flights:read/hold/book/cancel`;
-  `flights:webhooks` queda para integraciones B2B.
+### OPS-02 🔴 El frontend usa por defecto el puerto 3000 *(antes H2-02)*
+- `frontend/src/config.ts` → `http://localhost:3000`. Contra la API vieja, el JWT real de `dev-auth` da **403** al reservar, porque esa
+  versión usa el verificador simulado antiguo.
+- **Acción:** se resuelve con OPS-01. Si la API corre en otro puerto, crear `frontend/.env` con `VITE_API_URL`.
 
-## HALL-04 — Strings sin `maxLength`, `format` ni `pattern`
+### OPS-03 🟠 Siguen corriendo los servicios que levanté en la sesión anterior *(nuevo)*
+- PIDs **21772** (API en 3001), **16720** (dev-auth en 4000) y **40972** (Vite en 5173), del 04/10 19:24.
+- **Impacto:** si levantas el proyecto tú, el 4000 y el 5173 ya están ocupados. `npm start` de dev-auth falla, y Vite toma otro puerto,
+  con lo que CORS lo bloquea (OPS-05).
+- **Acción:** `Stop-Process -Id 21772, 16720, 40972`.
 
-- **Contrato:** `firstName`, `lastName`, `documentNumber`, `nationality`, `contact.email`, `contact.phone`, `paymentReference`, `reason`, `secret`, `offerId`, etc. son `type: string` sin límites. `email` no tiene `format: email`; `nationality` no tiene patrón ISO; `BookingRequest.passengers` no tiene `minItems`.
-- **Riesgo:** payloads enormes, datos basura, arrays vacíos de pasajeros aceptados.
-- **Conflicto:** agregar `@IsEmail()` o `@MaxLength()` haría la API **más estricta que el contrato** (rechazaría peticiones válidas según el YAML).
-- **Acción provisional:** solo protecciones que no contradicen el contrato: límite de tamaño de body (100kb), rechazo de caracteres de control y claves `__proto__`. Las validaciones de formato quedan pendientes de aprobación.
-- **Propuesta para el contrato:** `maxLength` en strings, `format: email`, `pattern: ^[A-Z]{2}$` para nacionalidad, `minItems: 1` en pasajeros.
+### OPS-04 🟠 `http://127.0.0.1:5173` rechaza la conexión *(antes H2-03)*
+- Vite escucha solo en `localhost` (IPv6 `::1` en Windows con Node 17+). Además, CORS solo permite `http://localhost:5173`.
+- **Acción:** usar `http://localhost:5173`.
 
-## HALL-05 — Enum `ProblemDetails.code` no cubre errores genéricos
+### OPS-05 🟠 Puerto 5173 ocupado → CORS bloquea *(antes H2-04)*
+- `npm run dev` no usa `--strictPort`. Si cambia a 5174, la API lo rechaza.
+- **Acción:** liberar el 5173 o agregar el puerto real a `CORS_ORIGINS`.
 
-- **Contrato:** `code` es requerido y su enum no tiene valores para no autenticado, sin permisos, no encontrado, conflicto de idempotencia o error interno.
-- **Código actual:** usa `VALIDATION_FAILED` como comodín para 401, 403, 404, 409 de idempotencia y 500, lo que es semánticamente engañoso para el cliente.
-- **Acción provisional:** se mantiene `VALIDATION_FAILED` (único valor que no rompe el schema) y se diferencia por `status` y `title`.
-- **Propuesta para el contrato:** agregar `UNAUTHORIZED`, `FORBIDDEN`, `RESOURCE_NOT_FOUND`, `IDEMPOTENCY_CONFLICT`, `INTERNAL_ERROR`.
+### OPS-06 🟡 Versión de Node *(antes H2-06)*
+- Instalado 24.12.0. `@nestjs/cli` pide ≥ 24.15 (advertencias `EBADENGINE`). Todo funciona; se recomienda actualizar a la última LTS 24.
 
-## HALL-06 — `POST /bookings`: `201` con estado `PENDING`
+---
 
-- **Contrato:** `201` = "Reserva creada y ticket emitido correctamente"; `202` = "pago o emisión continúa de forma asíncrona".
-- **Código actual:** responde siempre `201` con `status: PENDING` y `grandTotal: 0.00`, una combinación contradictoria.
-- **Acción provisional (incluida en CAMBIOS 5.5):** `201` solo con `CONFIRMED` y tickets `ISSUED`; `202` con `PENDING_PAYMENT`/`TICKET_ISSUING`.
-- **Implementado (Fase 5):** pago autorizado → `201 CONFIRMED` con tickets `ISSUED`; pago en proceso → `202 PENDING_PAYMENT` con tickets
-  `PENDING`, que pasan a `CONFIRMED`/`ISSUED` al confirmarse el pago.
-- **Pregunta al líder:** ¿qué estado debe devolverse con `201`? El contrato no lo restringe explícitamente.
+## 3. Despliegue en la nube — RDA1 (`NUBE`) *(nuevo)*
 
-## HALL-07 — `HoldRequest.itinerarySelections[].cabinClass` sin enum
+> RDA1: *"Cada equipo debe construir su aplicativo para que funcione de manera independiente y subir su API correspondiente a Render."*
+> El proyecto **funciona en local**, pero hoy **no queda listo para usarse en la nube** sin estos ajustes.
 
-- **Contrato:** en `CabinPricing.cabinClass` es enum (`ECONOMY`, `PREMIUM_ECONOMY`, `BUSINESS`, `FIRST`), pero en `HoldRequest` es string libre.
-- **Acción provisional:** se acepta cualquier string (como dice el contrato) y, si no coincide con una cabina de la oferta, se responde `409 OFFER_NO_LONGER_AVAILABLE`.
-- **Propuesta:** reutilizar el enum en `HoldRequest`. Lo mismo ocurre con `SeatMapResponse.cabins[].cabinClass` y `BookingListResponse.items[].status` (string libre vs enum de `BookingDetail.status`).
+### NUBE-01 🔴 Swagger no es usable en la nube
+- **Verificado en el código:**
+  - `isSwaggerEnabled()` apaga `/docs` cuando `NODE_ENV=production` (`swagger.setup.ts:93`).
+  - El servidor de "Try it out" se arma como `http://localhost:${port}` (`main.ts:40`), y el overlay solo existe fuera de producción (`main.ts:39`).
+    En producción solo quedan los `servers` del contrato (`api.booking-hub.com`), que no existen.
+- **Impacto:** en Render, o no hay Swagger, o "Try it out" envía las peticiones a una URL equivocada. Es justo lo que usarían los evaluadores.
+- **Propuesta (fase V1.3):** URL pública configurable (p. ej. `PUBLIC_API_URL`) para el servidor de Swagger y `SWAGGER_ENABLED=true` en Render.
+  **El contrato no cambia**: es el mismo overlay en memoria.
 
-## HALL-08 — Riesgo SSRF en `WebhookSubscription.url`
+### NUBE-02 🔴 Persistencia en memoria
+- Holds, reservas, idempotencia, rate limiting, webhooks y usuarios de `dev-auth` viven en memoria.
+- **Impacto en Render:** el plan gratuito duerme el servicio tras inactividad, y cada reinicio o redeploy **borra todas las reservas**.
+- **Propuesta (fase V1.2):** PostgreSQL con TypeORM, como la plantilla (ver PLT-03). Los repositorios ya están detrás de *ports*, así que
+  se cambian los adaptadores sin tocar controllers ni contrato.
 
-- **Contrato:** `url` es `format: uri`, sin restringir esquema ni host.
-- **Riesgo:** un cliente puede registrar `http://localhost:...` o `http://169.254.169.254/` y hacer que el servidor envíe peticiones a la red interna cuando se despachen eventos.
-- **Acción provisional (CAMBIOS 3.12):** en producción solo se aceptan `https` con host público; en desarrollo se permite `http://localhost` para pruebas. Es más estricto que el contrato.
-- **Pregunta al líder:** ¿se aprueba esta restricción y se documenta en el contrato?
+### NUBE-03 🔴 Autenticación en la nube
+- `dev-auth/server.mjs:15` termina el proceso con `NODE_ENV=production`. La API en producción exige `AUTH_ISSUER`, `AUTH_AUDIENCE` y un
+  `AUTH_JWT_SECRET` propio (≥ 32 caracteres, distinto al de desarrollo), o bien un `AUTH_JWKS_URL`.
+- **Decisión necesaria:** ¿quién emite tokens en la nube durante RDA1? Opciones: (a) desplegar `dev-auth` como servicio aparte con un
+  secreto compartido real (habría que permitirle arrancar en la nube); (b) que el booking central provea el proveedor OAuth2.
 
-## HALL-09 — `secret` del webhook se devuelve en GET/POST
+### NUBE-04 🟠 Falta la configuración de despliegue
+- No hay `Dockerfile`, `render.yaml` ni `.dockerignore` en el repo (la plantilla sí trae Docker para PostgreSQL).
+- Monorepo: en Render cada servicio necesita su *Root Directory*: `vuelos` (Web Service), `dev-auth` (Web Service) y `frontend`
+  (Static Site, con `VITE_API_URL` y `VITE_AUTH_URL` definidos **al compilar**).
+- `CORS_ORIGINS` debe contener la URL pública del frontend.
 
-- **Contrato:** `WebhookSubscription` se usa como request y response; `secret` es `required` y **no** está marcado `writeOnly`. Por tanto `GET /webhooks` debe devolverlo.
-- **Riesgo:** cualquiera que lea la lista de suscripciones obtiene el secreto de firma de los webhooks. Hoy, además, la lista no está filtrada por cliente (todos ven todos).
-- **Acción provisional:** se mantiene el campo (lo exige el contrato), pero se filtra por propietario (CAMBIOS 2.6).
-- **Propuesta para el contrato:** marcar `secret` como `writeOnly: true`.
+---
 
-## HALL-10 — Nombre de la aerolínea en el frontend
+## 4. Plantilla del booking (`PLT`) *(nuevo)*
 
-- No está definido. Se usará **"Hoja Verde Airlines"** como provisional. Indica el nombre definitivo si existe.
-- **Decisión (2026-10-03):** **EcoAirlines**. El código ficticio de aerolínea del GDS simulado pasó de `HV` a `EA` (vuelos `EA300`, etc.).
-- Aclaración: el diseño solo toma la **estructura** de la web de Avianca como referencia; no se usarán su logo, textos, imágenes ni marca.
+> La plantilla declara que su código es **"ejemplo estructural"** (todos sus endpoints devuelven `{}`). Lo obligatorio es el contrato,
+> idéntico al nuestro. Estas diferencias importan para la **integración en RDA2**.
 
-## HALL-11 — `404` no documentado en endpoints con `{bookingId}`
+### PLT-01 🔴 Tres rutas base distintas *(amplía el antiguo HALL-01)*
+| Fuente | Ruta base | Ejemplo |
+|--------|-----------|---------|
+| Contrato (`servers`) | `/flights/v1` | `https://api.booking-hub.com/flights/v1/search` |
+| Plantilla (`main.ts`) | `/api/v1` | `http://localhost:3000/api/v1/search` |
+| Nuestro código | raíz | `http://localhost:3000/search` |
+- **Impacto:** en RDA2 el booking central llamará a una ruta concreta. Si no coincide, todas las llamadas darán 404.
+- **Pregunta al líder:** ¿qué ruta base se usará en la integración? Sugerencia: la del contrato (`/flights/v1`). Se implementa con un
+  prefijo configurable (`API_PREFIX`), sin tocar el contrato.
 
-- **Contrato:** `baggage-options`, `baggage`, `date-change/search`, `date-change`, `cancellation-quote`, `cancel` y `check-in` reciben `bookingId` pero **no documentan `404`**; `DELETE /webhooks/{id}` tampoco. Solo `GET /bookings/{bookingId}`, `tickets` y `boarding-passes` lo hacen.
-- **Código actual:** responde `404` si la reserva no existe o no es del usuario (necesario para evitar IDOR).
-- **Acción provisional:** se mantiene `404` (no hay alternativa segura dentro del contrato).
-- **Propuesta:** documentar `404` en todos los endpoints con identificador en el path.
+### PLT-02 🟠 Ruta de Swagger
+- Plantilla: `/api/docs` (Swagger generado con decoradores `@nestjs/swagger`). Nuestro código: `/docs` (sirve el YAML del contrato tal cual).
+- Mantener el YAML original es más fiel al contrato. Solo hace falta acordar la ruta.
 
-## HALL-12 — `POST /bookings/{bookingId}/check-in` sin `Idempotency-Key`
+### PLT-03 🟠 Persistencia
+- La plantilla trae `TypeOrmModule` con PostgreSQL (`DATABASE_URL`) y `docker-compose.yml` (postgres:16). Nuestro código usa repositorios
+  en memoria. Se resuelve junto con NUBE-02.
 
-- Es la única operación `POST` que modifica estado sin exigir `Idempotency-Key`. Se respeta el contrato (no se exige) y se implementa como operación naturalmente idempotente (repetir el check-in devuelve el mismo resultado). Informativo.
+### PLT-04 🟡 Los DTOs de la plantilla no siguen al pie de la letra el contrato
+- Exigen campos que el contrato marca como **opcionales**: `CancelBookingRequest.reason`, y `DateChangeRequest.payment` y `assignedSeats`.
+- Activan `forbidNonWhitelisted` en toda la API: rechazan propiedades extra incluso en schemas que el contrato no marca como `additionalProperties: false`.
+- Validan fechas con `IsDateString`, que acepta fecha-hora, cuando el contrato pide `format: date`.
+- **Nuestro código sigue el contrato** en los tres casos (comprobado por la prueba de conformidad). Si se compara contra la plantilla,
+  la diferencia está justificada.
 
-## HALL-13 — Respuestas sin body definido
+### PLT-05 ⚪ Entidad `Vuelo` y `CreateVueloDto`
+- La plantilla incluye un CRUD de vuelos (`aerolinea`, `codigoVuelo`, `precioBase`…) que **no existe en el contrato**. No se expone
+  como endpoint. Nuestro catálogo equivalente vive en el GDS simulado.
 
-- `POST /bookings/{id}/cancel` → `200` sin schema; `202` de `baggage`, `date-change` y `cancel` sin schema. El cliente no sabe qué esperar.
-- **Acción provisional:** se responden sin body (lo más fiel al contrato). Propuesta: devolver `BookingDetail`.
+### PLT-06 ⚪ Estructura interna
+- La plantilla usa un único módulo `vuelos` con un controller. Nuestro código usa 7 dominios (search, offers, bookings, post-sale,
+  check-in, flight-status, webhooks), como pide `CLAUDE.md`. La integración es por HTTP según el contrato, así que la estructura interna
+  no afecta. Solo importan PLT-01 y PLT-02.
 
-## HALL-14 — Inconsistencias menores
+---
 
-- `info.version: 1.5.0.0` no sigue SemVer (`MAJOR.MINOR.PATCH`).
-- `PassengerBreakdown` no tiene `additionalProperties: false`, aunque lo tiene su padre `SearchRequest`.
-- Los importes en `MoneyAmount`, `CancellationQuoteResponse` y `priceDifference` son `string` sin `pattern` decimal; `CancellationQuoteResponse.currency` no tiene el patrón `^[A-Z]{3}$` usado en `MoneyAmount`.
-- `GET /bookings` `limit` tiene `maximum: 50` pero no `minimum`; `status` es string libre.
-- `PassengerItem.associatedAdultId` no es obligatorio para `INFANT` (debería serlo por regla de negocio, que el contrato insinúa con `INFANT_SEAT_NOT_ALLOWED`).
-- `POST /webhooks` no documenta `400` aunque recibe body validado.
+## 5. Documentación y proceso (`DOC`)
 
-## HALL-15 — Body demasiado grande y `Content-Type` incorrecto (`413`/`415`)
+### DOC-01 🟡 "25 operaciones" es incorrecto: son 22 *(antes H2-05, sigue vigente)*
+- Aparece en `CAMBIOS.md` (resultados de las fases 1 y 7), `vuelos/AUDITORIA.md` (AUD-012) y `vuelos/README.md` (tabla de pruebas e2e).
+  Las pruebas no usan un número fijo: calculan la lista desde el contrato.
 
-- **Contexto (Fase 3):** la API limita el body a 100kb y solo acepta `application/json`.
-- **Problema:** lo semánticamente correcto en HTTP sería `413 Payload Too Large` y `415 Unsupported Media Type`, pero el contrato no
-  los documenta en ningún endpoint.
-- **Acción provisional:** se responde `400` ProblemDetails `VALIDATION_FAILED`, el código de error de cliente más documentado,
-  indicando la causa en `invalidParams` (`payload too large`, `must be application/json`, `malformed JSON`).
-- **Propuesta para el contrato:** documentar `413` y `415` como respuestas comunes de los endpoints con body.
+### DOC-02 🟠 Gemini no leerá `AGENTS.md` automáticamente *(nuevo)*
+- Cambiaste el rol de auditor a **Gemini** en `vuelos/AGENTS.md` (cambio aún sin commit). Gemini CLI carga por defecto **`GEMINI.md`**;
+  no hay `GEMINI.md` ni `~/.gemini/settings.json` con `contextFileName`.
+- **Impacto:** Gemini auditaría sin las reglas de auditoría.
+- **Acción:** crear `GEMINI.md` (o configurar `"contextFileName": ["AGENTS.md"]`). Además, `vuelos/AUDITORIA.md` y `README.md` todavía
+  nombran a OpenCode como auditor.
 
-## HALL-16 — `429` solo documentado en `/search` y `/seatmap`
+---
 
-- **Contrato:** `429` (con `Retry-After` y el código `RATE_LIMIT_EXCEEDED`) solo aparece en `POST /search` y `GET /offers/{offerId}/seatmap`.
-- **Problema:** sin un límite global, el resto de endpoints quedaría expuesto a abuso (fuerza bruta de tokens, enumeración de ids,
-  creación masiva de holds). Con el límite global, esos endpoints pueden devolver un `429` que su contrato no declara.
-- **Acción provisional:** límite global generoso (300 peticiones/min por IP) y límites estrictos solo en los dos endpoints que lo
-  documentan (30 y 60/min). Todo es configurable por variables de entorno.
-- **Propuesta para el contrato:** documentar `429` en todos los endpoints, o declarar que el rate limiting general lo aplica el gateway.
+## 6. Contrato (`HALL`) — estado verificado contra el código
 
-## HALL-17 — Header `X-Request-Id` no documentado
+| ID | Tema | Estado | Qué hace hoy el código (verificado) | Pregunta o propuesta para el contrato | Decisión |
+|----|------|--------|-------------------------------------|---------------------------------------|----------|
+| HALL-01 | Ruta base | 🔴 Abierto | Rutas en la raíz | **Ampliado en PLT-01** | |
+| HALL-02 | `401` no documentado; `403` definido pero sin usar | 🟠 Abierto | `401` sin token/token inválido, `403` sin scope | Documentar `401` y `403` | |
+| HALL-03 | Login para el frontend | ✅ Resuelto | `dev-auth/` separado; la API no ganó rutas | — (ver NUBE-03 para la nube) | Permitido (03/10) |
+| HALL-04 | Strings sin `maxLength`/`format` | 🟠 Abierto | Body ≤ 100 KB, sin caracteres de control ni `__proto__` | `maxLength`, `format: email`, `minItems` | |
+| HALL-05 | Enum `code` sin valores genéricos | 🟠 Abierto | `VALIDATION_FAILED` para 401/403/404/500 | Agregar `UNAUTHORIZED`, `FORBIDDEN`, `RESOURCE_NOT_FOUND`… | |
+| HALL-06 | `201` frente a `PENDING` | 🟡 Implementado provisional | `201 CONFIRMED`; `202 PENDING_PAYMENT` → `CONFIRMED` | Confirmar el estado del `201` | |
+| HALL-07 | `cabinClass` libre en HoldRequest | 🟡 Abierto | Acepta cualquier string; si no existe en la oferta → `422` | Reutilizar el enum | |
+| HALL-08 | SSRF en URL de webhooks | 🟠 Implementado provisional | En producción: solo `https` y host público | Documentar la restricción | |
+| HALL-09 | `secret` devuelto en GET/POST de webhooks | 🟠 Abierto | Se devuelve (lo exige el schema), filtrado por dueño | `writeOnly: true` | |
+| HALL-10 | Nombre de la marca | ✅ Resuelto | EcoAirlines, código `EA` | — | EcoAirlines (03/10) |
+| HALL-11 | `404` no documentado en endpoints con `{bookingId}` | 🟠 Abierto | `404` si no existe o es ajena (evita IDOR) | Documentar `404` | |
+| HALL-12 | Check-in sin `Idempotency-Key` | ⚪ Informativo | Operación idempotente | — | |
+| HALL-13 | Respuestas sin body (`cancel 200`, varios `202`) | 🟡 Abierto | Sin body, como el contrato | Devolver `BookingDetail` | |
+| HALL-14 | Inconsistencias menores (versión no SemVer, `limit` sin mínimo…) | 🟡 Abierto | `limit` exige ≥ 1 | Ajustes menores | |
+| HALL-15 | `413`/`415` no documentados | 🟡 Abierto | Se responde `400` | Documentar `413`/`415` | |
+| HALL-16 | `429` solo en 2 endpoints | 🟠 Abierto | Límite global de 300/min y estricto en search/seatmap | Documentar `429` global | |
+| HALL-17 | Header `X-Request-Id` | ⚪ Informativo | En todas las respuestas, no en el body | Documentarlo | |
+| HALL-18 | Cotización vencida en `/cancel` | 🟠 Abierto | `409 QUOTE_EXPIRED` | Agregar `410` a `/cancel` | |
+| HALL-19 | `POST /bookings` sin `404` | 🟠 Abierto | Hold inexistente o ajeno → `422` | ¿`422` o documentar `404`? | |
+| HALL-20 | Errores de posventa no documentados | 🟠 Abierto | `400` itinerario o pasajero ajeno; `409` pagos en baggage | Documentar `400`/`409` | |
+| HALL-21 | `DateChangeRequest.assignedSeats` sin `passengerId` | 🟠 Abierto | Asigna en orden a los pasajeros con asiento | Agregar `passengerId` | |
+| HALL-22 | Arrays sin `minItems` | 🟡 Abierto | Regla de negocio con `422` | `minItems: 1` | |
+| HALL-23 | Significado de `totalBaggage` | 🟡 Abierto | Incluidas + extra | Agregar `description` | |
+| HALL-24 | `PaymentReference` sin monto ni uso único | 🟠 Abierto | Mock: formato `pay_…`, uso único; `async`/`declined` simulados | Confirmar con el dominio de pagos | |
+| HALL-25 | Edades por tipo de pasajero | 🟡 Abierto | No se valida edad contra tipo; el frontend muestra rangos guía | Documentar rangos | |
+| HALL-26 | Sin catálogo de aeropuertos | ⚪ Informativo | El frontend mantiene una lista de 10 | `GET /airports` futuro | |
 
-- **Contexto (Fase 4):** todas las respuestas incluyen `X-Request-Id` (identificador de correlación para soporte y logs). Si el
-  cliente envía un UUID en ese header, se respeta.
-- **Impacto en el contrato:** ninguno incompatible. Es un header de respuesta adicional y opcional para el cliente; ningún schema cambia.
-  No se agregó al body porque `ProblemDetails` tiene `additionalProperties: false`.
-- **Propuesta:** documentarlo como header común de respuesta (y opcional de petición) en la próxima versión, para que los clientes
-  sepan que pueden enviarlo y reportarlo al pedir soporte.
+> El detalle de cada `HALL` (contexto, evidencia y opciones) está en la versión anterior: `git show adb6c48:HALLAZGOS.md`.
 
-## HALL-18 — Cotización de cancelación vencida
+---
 
-- **Contrato:** `ProblemDetails410` se describe como "Recurso expirado (Hold o **Cotización**)" y existe el código `QUOTE_EXPIRED`,
-  pero `POST /bookings/{bookingId}/cancel` solo documenta `200`, `202` y `409`.
-- **Acción provisional (Fase 5):** cotización vencida → `409 QUOTE_EXPIRED`; `quoteId` desconocido o de otra reserva → `409 VALIDATION_FAILED`.
-- **Propuesta:** agregar `410` a `/cancel` (como en `POST /bookings` y `date-change`).
+## 7. Comportamientos esperados (no son fallas)
 
-## HALL-19 — `POST /bookings` no documenta `404`
-
-- **Contrato:** `POST /bookings` documenta `400`, `409`, `410` y `422`. No hay respuesta para un `holdId` inexistente o de otro usuario.
-- **Acción provisional (Fase 5):** `422 VALIDATION_FAILED` (la entidad referenciada no es procesable). Hold vencido → `410 OFFER_NO_LONGER_AVAILABLE`;
-  hold ya usado o liberado → `409 OFFER_NO_LONGER_AVAILABLE`. El plan original (CAMBIOS 5.4) decía `404`; se corrigió en la revisión (REV-08).
-- **Pregunta al líder:** ¿`422` es aceptable o se prefiere documentar `404`?
-
-## HALL-20 — Errores de posventa no documentados
-
-Casos reales que el contrato no cubre en los endpoints de posventa (acción provisional entre paréntesis):
-- `GET /cancellation-quote` y `GET /baggage-options` solo documentan `200`. Una reserva cancelada o no confirmada no puede cotizarse
-  (`409 ALREADY_CANCELLED` / `409 BOOKING_NOT_CONFIRMED`).
-- `POST /baggage`, `/date-change/search` y `/date-change` no documentan `400`. Un `itineraryId` o `passengerId` que no está en la
-  reserva es un error de la petición (`400 VALIDATION_FAILED`, igual que las validaciones de body).
-- `POST /baggage` solo documenta `409`: los problemas de pago se informan con `409 PAYMENT_REFERENCE_INVALID` / `409 PAYMENT_NOT_AUTHORIZED`
-  (en `POST /bookings` son `422`).
-- **Propuesta:** documentar `400` y `409` en todos los endpoints de posventa, y `422` para pagos de forma uniforme.
-
-## HALL-21 — `DateChangeRequest.assignedSeats` no indica el pasajero
-
-- **Contrato:** cada ítem tiene solo `segmentId` y `seatNumber` (ninguno `required`). Con varios pasajeros no se sabe de quién es cada asiento.
-- **Acción provisional (Fase 5):** los asientos de cada segmento se asignan **en orden** a los pasajeros con asiento, según el orden de la reserva.
-  Más asientos que pasajeros → `409 VALIDATION_FAILED`.
-- **Propuesta:** agregar `passengerId` (requerido) a esos ítems, como en `PassengerItem.assignedSeats`.
-
-## HALL-22 — Arrays sin `minItems`
-
-- **Contrato:** `HoldRequest.itinerarySelections`, `BookingRequest.passengers`, `DateChangeSearchRequest.changes` y `WebhookSubscription.events`
-  no declaran `minItems`, y `PassengerItem.extraBaggage[].quantity` no declara `minimum`.
-- **Problema detectado en la revisión (REV-02):** el código exigía mínimo 1 con `400`, **más estricto que el contrato**.
-- **Acción (Fase 5):** se quitaron del DTO. La regla se aplica como negocio donde el contrato documenta `422`:
-  hold sin selecciones → `422`; pasajeros que no coinciden con el hold → `422`; maleta con cantidad < 1 → `422`.
-  `changes: []` devuelve cero opciones y una suscripción con `events: []` es válida (no recibirá eventos).
-- **Propuesta:** declarar `minItems: 1` donde corresponda.
-
-## HALL-23 — Significado de `BaggageAddedResponse.totalBaggage`
-
-- **Contrato:** `totalBaggage` es un entero sin descripción: puede leerse como maletas extra compradas o como total facturado.
-- **Acción provisional (Fase 5):** total de maletas facturadas del pasajero en ese itinerario = incluidas en la tarifa + extra compradas.
-- **Propuesta:** agregar una `description` al campo.
-
-## HALL-24 — `PaymentReference` sin monto ni reglas de uso
-
-- **Contrato:** `PaymentReference` solo tiene `paymentReference`. Existen los códigos `AMOUNT_MISMATCH`, `PAYMENT_REFERENCE_INVALID` y
-  `PAYMENT_NOT_AUTHORIZED`, pero no se define cómo se verifica el monto ni si una referencia puede usarse dos veces.
-- **Riesgo:** sin una regla de uso único, un mismo pago podría aplicarse a varias reservas o maletas.
-- **Acción provisional (Fase 5):** la Payment API simulada exige formato `pay_…`, rechaza referencias ya aplicadas a otra operación
-  (`PAYMENT_REFERENCE_INVALID`) y simula rechazos (`declined`) y pagos asíncronos (`async` → `202`). `AMOUNT_MISMATCH` no se usa:
-  la verificación del monto corresponde a la Payment API real.
-- **Pregunta al líder:** confirmar con el dominio de pagos el contrato de verificación (monto, moneda, uso único).
-
-## HALL-25 — Edades de `ADULT`, `YOUTH`, `CHILD` e `INFANT`
-
-- **Contrato:** define los tipos de pasajero pero no sus rangos de edad, ni valida `birthDate` contra el tipo.
-- **Acción provisional (Fase 6):** el frontend muestra como guía: adulto 15+, joven 12–14, niño 2–11, infante menor de 2 (en brazos).
-  La API **no** valida la edad contra el tipo, porque el contrato no lo pide.
-- **Propuesta:** documentar los rangos y si `birthDate` debe ser coherente con `passengerType` (error `422`).
-
-## HALL-26 — No hay catálogo de aeropuertos
-
-- **Contrato:** no expone un endpoint de aeropuertos o destinos. El frontend necesita una lista para los selectores de origen y destino.
-- **Acción (Fase 6):** el frontend mantiene la lista de los 10 aeropuertos de la red (`frontend/src/data/airports.ts`). Si la red cambia,
-  hay que actualizarla a mano. Informativo: no rompe el contrato.
-- **Propuesta:** un `GET /airports` (o `/destinations`) público en una versión futura.
+- **Recargar la página cierra la sesión:** el token vive solo en memoria, por seguridad.
+- **Reiniciar la API borra reservas y holds** mientras la persistencia sea en memoria (NUBE-02).
+- **Endpoints protegidos en Swagger:** generar un token con `cd vuelos; npm run token` y usarlo en *Authorize* → `DevBearer`.
+- **`POST /bookings/{id}/cancel` nunca devuelve `202`:** la cancelación del GDS simulado es síncrona.

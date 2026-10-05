@@ -1,11 +1,11 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
-import type { BookingRecord } from '../../domain/ports/booking-repository.port.js';
+import type { BookingSnapshot } from '../../application/bookings.facade.js';
 import type { RequestWithBooking } from '../guards/booking-ownership.guard.js';
 
-/** Inyecta la reserva ya resuelta y verificada por BookingOwnershipGuard. */
+/** Inyecta la reserva (copia de solo lectura) ya resuelta y verificada por BookingOwnershipGuard. */
 export const CurrentBooking = createParamDecorator(
-  (_data: unknown, ctx: ExecutionContext): BookingRecord => {
+  (_data: unknown, ctx: ExecutionContext): BookingSnapshot => {
     const request = ctx.switchToHttp().getRequest<RequestWithBooking>();
-    return request.booking as BookingRecord;
+    return request.booking as BookingSnapshot;
   },
 );

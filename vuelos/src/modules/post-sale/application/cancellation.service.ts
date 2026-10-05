@@ -3,14 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { formatCents, toCents } from '../../../common/money/money.js';
 import { seatsRequired } from '../../../common/passengers/passenger-counts.js';
 import { ProblemDetailsException } from '../../../common/problem-details/problem-details.exception.js';
-import { seatHolder } from '../../bookings/application/seat-assignment.service.js';
-import {
-  BOOKING_REPOSITORY_PORT,
-  type BookingRecord,
-  type BookingRepositoryPort,
-} from '../../bookings/domain/ports/booking-repository.port.js';
-import { RESERVATION_SYSTEM_PORT, type ReservationSystemPort } from '../../bookings/domain/ports/reservation-system.port.js';
+import { seatHolder } from '../../../common/seating/seat-assigner.js';
+import { BookingsFacade, type BookingSnapshot } from '../../bookings/application/bookings.facade.js';
 import { assertConfirmed, hasDeparted } from '../domain/post-sale-rules.js';
+import { POST_SALE_GDS_PORT, type PostSaleGdsPort } from '../domain/ports/post-sale-gds.port.js';
 import { CANCELLATION_QUOTE_STORE, type QuoteStorePort } from '../domain/ports/quote-store.port.js';
 import type { CancelBookingRequestDto, CancellationQuoteResponseDto } from '../presentation/dto/cancellation.dto.js';
 
@@ -27,26 +23,28 @@ export interface CancellationQuotePayload {
  * Cotización: por cada itinerario no volado, una tarifa reembolsable devuelve su total; una no
  * reembolsable devuelve solo los impuestos y la tarifa base queda como penalidad. Las maletas extra
  * no se reembolsan. El reembolso financiero lo ejecuta la Payment API; aquí solo se registra.
+ * Las cotizaciones son datos de post-sale (BD futura: `post-sale`); la cancelación de la reserva se
+ * pide a bookings mediante `BookingsFacade`.
  */
 @Injectable()
 export class CancellationService {
   constructor(
-    @Inject(BOOKING_REPOSITORY_PORT) private readonly bookingRepository: BookingRepositoryPort,
-    @Inject(RESERVATION_SYSTEM_PORT) private readonly reservationSystem: ReservationSystemPort,
+    private readonly bookings: BookingsFacade,
+    @Inject(POST_SALE_GDS_PORT) private readonly gds: PostSaleGdsPort,
     @Inject(CANCELLATION_QUOTE_STORE) private readonly quotes: QuoteStorePort<CancellationQuotePayload>,
   ) {}
 
-  async getQuote(booking: BookingRecord): Promise<CancellationQuoteResponseDto> {
+  async getQuote(booking: BookingSnapshot): Promise<CancellationQuoteResponseDto> {
     assertConfirmed(booking);
 
     let refundCents = 0;
     let penaltyCents = 0;
     let allRefundable = true;
     const unflownItineraryIds: string[] = [];
-    for (const fare of booking.internal.fares) {
-      if (await hasDeparted(fare, this.reservationSystem)) continue;
+    for (const fare of booking.fares) {
+      if (await hasDeparted(fare, this.gds)) continue;
       unflownItineraryIds.push(fare.itineraryId);
-      const conditions = await this.reservationSystem.fareConditions(fare.cabinClass, fare.fareBrand);
+      const conditions = await this.gds.fareConditions(fare.cabinClass, fare.fareBrand);
       if (conditions?.isRefundable) {
         refundCents += toCents(fare.price.total);
       } else {
@@ -71,7 +69,7 @@ export class CancellationService {
   }
 
   /** `POST /cancel` solo documenta 409 como error: una cotización desconocida o vencida responde 409 (HALL-18). */
-  async cancel(booking: BookingRecord, request: CancelBookingRequestDto): Promise<void> {
+  async cancel(booking: BookingSnapshot, request: CancelBookingRequestDto): Promise<void> {
     assertConfirmed(booking);
 
     const quote = await this.quotes.find(request.quoteId);
@@ -87,33 +85,25 @@ export class CancellationService {
       throw new ProblemDetailsException({ status: 409, code: 'QUOTE_EXPIRED', title: 'La cotización expiró; solicite una nueva.' });
     }
 
-    const seatCount = seatsRequired(booking.internal.counts);
-    for (const fare of booking.internal.fares.filter((candidate) => quote.payload.unflownItineraryIds.includes(candidate.itineraryId))) {
-      await this.reservationSystem.releaseInventory(fare.segmentIds, fare.cabinClass, seatCount);
+    // Efectos en el sistema externo (GDS): liberar cupos y asientos de los vuelos no volados.
+    const seatCount = seatsRequired(booking.counts);
+    for (const fare of booking.fares.filter((candidate) => quote.payload.unflownItineraryIds.includes(candidate.itineraryId))) {
+      await this.gds.releaseInventory(fare.segmentIds, fare.cabinClass, seatCount);
       for (const passenger of booking.passengers ?? []) {
         for (const seat of passenger.assignedSeats ?? []) {
           if (fare.segmentIds.includes(seat.segmentId)) {
-            await this.reservationSystem.releaseSeat(seat.segmentId, seat.seatNumber, seatHolder(booking.bookingId, passenger.passengerId));
+            await this.gds.releaseSeat(seat.segmentId, seat.seatNumber, seatHolder(booking.bookingId, passenger.passengerId));
           }
         }
       }
     }
 
     await this.quotes.delete(quote.id);
-    const refunded = quote.payload.refundCents > 0;
-    const now = new Date().toISOString();
-    await this.bookingRepository.update(booking.bookingId, {
-      status: 'CANCELLED',
-      tickets: (booking.tickets ?? []).map((ticket) => ({ ...ticket, status: refunded ? 'REFUNDED' : 'VOIDED' })),
-      changes: [
-        ...(booking.changes ?? []),
-        {
-          changedAt: now,
-          description:
-            `Reserva cancelada (cotización ${quote.id}). Reembolso: ${formatCents(quote.payload.refundCents)} ${booking.grandTotal.currency}; ` +
-            `penalidad: ${formatCents(quote.payload.penaltyCents)}.${request.reason ? ` Motivo: ${request.reason}` : ''}`,
-        },
-      ],
+    await this.bookings.cancel(booking.bookingId, {
+      refunded: quote.payload.refundCents > 0,
+      description:
+        `Reserva cancelada (cotización ${quote.id}). Reembolso: ${formatCents(quote.payload.refundCents)} ${booking.grandTotal.currency}; ` +
+        `penalidad: ${formatCents(quote.payload.penaltyCents)}.${request.reason ? ` Motivo: ${request.reason}` : ''}`,
     });
   }
 }

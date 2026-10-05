@@ -4,7 +4,9 @@ import type { MoneyAmount, PassengerItem } from '../../../common/contract-types/
 import { moneyFromCents, scaleMoney, sumMoney } from '../../../common/money/money.js';
 import { ProblemDetailsException } from '../../../common/problem-details/problem-details.exception.js';
 import { DeferredTaskRunner } from '../../../common/scheduling/deferred-task-runner.js';
-import { buildTickets, generatePnr, issuePendingTickets, toBookingDetail } from '../domain/booking-records.js';
+import { paymentProblem } from '../../../common/payments/payment-verification.js';
+import { SeatAssigner } from '../../../common/seating/seat-assigner.js';
+import { buildTickets, generatePnr, issuePendingTickets } from '../domain/booking-records.js';
 import { assertPassengersMatchHold } from '../domain/passenger-rules.js';
 import {
   BOOKING_REPOSITORY_PORT,
@@ -14,6 +16,7 @@ import {
 import { HOLD_GATEWAY_PORT, type HoldGatewayPort, type HoldLookup } from '../domain/ports/hold-gateway.port.js';
 import { PAYMENT_VERIFIER_PORT, type PaymentVerifierPort } from '../domain/ports/payment-verifier.port.js';
 import { RESERVATION_SYSTEM_PORT, type ReservationSystemPort } from '../domain/ports/reservation-system.port.js';
+import { toDetail, type BookingSnapshot } from './bookings.facade.js';
 import type { BookingRequestDto } from '../presentation/dto/booking-request.dto.js';
 import type {
   BookingDetailDto,
@@ -22,7 +25,6 @@ import type {
   TicketListResponseDto,
 } from '../presentation/dto/booking-detail.dto.js';
 import type { ListBookingsQueryDto } from '../presentation/dto/list-bookings-query.dto.js';
-import { SeatAssignmentService } from './seat-assignment.service.js';
 
 export interface BookingCreationResult {
   /** 201: reserva creada y tickets emitidos. 202: el pago o la emisión continúan de forma asíncrona. */
@@ -32,14 +34,17 @@ export interface BookingCreationResult {
 
 @Injectable()
 export class BookingsService {
+  private readonly seats: SeatAssigner;
+
   constructor(
     @Inject(BOOKING_REPOSITORY_PORT) private readonly bookingRepository: BookingRepositoryPort,
     @Inject(HOLD_GATEWAY_PORT) private readonly holds: HoldGatewayPort,
     @Inject(PAYMENT_VERIFIER_PORT) private readonly payments: PaymentVerifierPort,
     @Inject(RESERVATION_SYSTEM_PORT) private readonly reservationSystem: ReservationSystemPort,
-    private readonly seats: SeatAssignmentService,
     private readonly tasks: DeferredTaskRunner,
-  ) {}
+  ) {
+    this.seats = new SeatAssigner(reservationSystem);
+  }
 
   /**
    * Orden: validar hold y pasajeros → cotizar maletas → verificar pago → asignar asientos →
@@ -112,14 +117,13 @@ export class BookingsService {
           segmentIds: ids,
           price,
         })),
-        checkIns: {},
       },
     });
 
     if (!issued) {
       this.tasks.schedule(`ticket-issuance:${bookingId}`, () => this.completeIssuance(bookingId));
     }
-    return { statusCode: issued ? 201 : 202, booking: toBookingDetail(record) };
+    return { statusCode: issued ? 201 : 202, booking: toDetail(record) };
   }
 
   /** Filtros del contrato (`pnr`, `status`, `createdFrom`, `createdTo`) y paginación por cursor opaco. */
@@ -143,16 +147,16 @@ export class BookingsService {
   }
 
   /** La reserva ya fue resuelta y verificada como propia por BookingOwnershipGuard. */
-  getDetail(record: BookingRecord): BookingDetailDto {
-    return toBookingDetail(record);
+  getDetail(booking: BookingSnapshot): BookingDetailDto {
+    return toDetail(booking);
   }
 
-  listTickets(record: BookingRecord): TicketListResponseDto {
-    return { bookingId: record.bookingId, tickets: record.tickets ?? [] };
+  listTickets(booking: BookingSnapshot): TicketListResponseDto {
+    return { bookingId: booking.bookingId, tickets: [...(booking.tickets ?? [])] };
   }
 
-  getTicket(record: BookingRecord, ticketId: string) {
-    const ticket = record.tickets?.find((t) => t.ticketId === ticketId);
+  getTicket(booking: BookingSnapshot, ticketId: string) {
+    const ticket = booking.tickets?.find((t) => t.ticketId === ticketId);
     if (!ticket) {
       throw ProblemDetailsException.notFound('Ticket no encontrado.');
     }
@@ -202,17 +206,6 @@ function holdProblem(reason: Exclude<HoldLookup, { ok: true }>['reason']): Probl
     case 'NOT_HELD':
       return new ProblemDetailsException({ status: 409, code: 'OFFER_NO_LONGER_AVAILABLE', title: 'El hold ya fue utilizado o liberado.' });
   }
-}
-
-export function paymentProblem(verification: 'INVALID' | 'NOT_AUTHORIZED', status: 409 | 422): ProblemDetailsException {
-  return verification === 'INVALID'
-    ? new ProblemDetailsException({
-        status,
-        code: 'PAYMENT_REFERENCE_INVALID',
-        title: 'La referencia de pago no es válida o ya fue utilizada.',
-        invalidParams: [{ name: 'payment.paymentReference', reason: 'invalid or already used' }],
-      })
-    : new ProblemDetailsException({ status, code: 'PAYMENT_NOT_AUTHORIZED', title: 'El pago no fue autorizado por la Payment API.' });
 }
 
 function toListItem(booking: BookingRecord): BookingListItemDto {

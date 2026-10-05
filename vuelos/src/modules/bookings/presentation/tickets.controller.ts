@@ -7,7 +7,7 @@ import type { TicketListResponseDto } from './dto/booking-detail.dto.js';
 import type { Ticket } from '../../../common/contract-types/common.types.js';
 import { BookingOwnershipGuard } from './guards/booking-ownership.guard.js';
 import { CurrentBooking } from './decorators/current-booking.decorator.js';
-import type { BookingRecord } from '../domain/ports/booking-repository.port.js';
+import type { BookingSnapshot } from '../application/bookings.facade.js';
 
 @Controller('bookings/:bookingId/tickets')
 @UseGuards(OAuth2AuthGuard, ScopesGuard, BookingOwnershipGuard)
@@ -16,12 +16,12 @@ export class TicketsController {
   constructor(private readonly bookingsService: BookingsService) {}
 
   @Get()
-  list(@CurrentBooking() booking: BookingRecord): TicketListResponseDto {
+  list(@CurrentBooking() booking: BookingSnapshot): TicketListResponseDto {
     return this.bookingsService.listTickets(booking);
   }
 
   @Get(':ticketId')
-  getOne(@CurrentBooking() booking: BookingRecord, @Param('ticketId') ticketId: string): Ticket {
+  getOne(@CurrentBooking() booking: BookingSnapshot, @Param('ticketId') ticketId: string): Ticket {
     return this.bookingsService.getTicket(booking, ticketId);
   }
 }

@@ -4,6 +4,9 @@ import { sumMoney } from '../../../common/money/money.js';
 import { resolvePassengerCounts, seatsRequired } from '../../../common/passengers/passenger-counts.js';
 import { ProblemDetailsException } from '../../../common/problem-details/problem-details.exception.js';
 import { HOLD_REPOSITORY_PORT, type HoldRecord, type HoldRepositoryPort } from '../domain/ports/hold-repository.port.js';
+
+/** Vista del hold que `HoldService` (API pública de offers) entrega a otros dominios. */
+export type { HoldRecord } from '../domain/ports/hold-repository.port.js';
 import { OFFER_INVENTORY_PORT, type OfferInventoryPort } from '../domain/ports/offer-inventory.port.js';
 import type { HoldRequestDto } from '../presentation/dto/hold-request.dto.js';
 import type { HoldResponseDto, HoldStatusResponseDto } from '../presentation/dto/hold-response.dto.js';

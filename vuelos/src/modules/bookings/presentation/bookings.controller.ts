@@ -23,7 +23,7 @@ import { ListBookingsQueryDto } from './dto/list-bookings-query.dto.js';
 import type { BookingDetailDto, BookingListResponseDto } from './dto/booking-detail.dto.js';
 import { BookingOwnershipGuard } from './guards/booking-ownership.guard.js';
 import { CurrentBooking } from './decorators/current-booking.decorator.js';
-import type { BookingRecord } from '../domain/ports/booking-repository.port.js';
+import type { BookingSnapshot } from '../application/bookings.facade.js';
 import {
   ForbidUnknownPropertiesGuard,
   PAYMENT_REFERENCE_KEYS,
@@ -69,7 +69,7 @@ export class BookingsController {
   @Get(':bookingId')
   @Scopes('flights:read')
   @UseGuards(BookingOwnershipGuard)
-  getDetail(@CurrentBooking() booking: BookingRecord): BookingDetailDto {
+  getDetail(@CurrentBooking() booking: BookingSnapshot): BookingDetailDto {
     return this.bookingsService.getDetail(booking);
   }
 }

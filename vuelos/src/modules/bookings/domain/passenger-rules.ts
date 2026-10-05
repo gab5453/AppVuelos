@@ -2,9 +2,7 @@ import type { PassengerItem } from '../../../common/contract-types/common.types.
 import { countPassengers, type PassengerCounts } from '../../../common/passengers/passenger-counts.js';
 import type { ProblemDetailsCode } from '../../../common/problem-details/problem-details.types.js';
 import { ProblemDetailsException } from '../../../common/problem-details/problem-details.exception.js';
-
-/** Política comercial: máximo de maletas extra por pasajero e itinerario. */
-export const MAX_EXTRA_BAGS = 3;
+import { MAX_EXTRA_BAGS } from '../../../common/policies/commercial-policy.js';
 
 function unprocessable(code: ProblemDetailsCode, title: string, name: string, reason: string): ProblemDetailsException {
   return new ProblemDetailsException({ status: 422, code, title, invalidParams: [{ name, reason }] });

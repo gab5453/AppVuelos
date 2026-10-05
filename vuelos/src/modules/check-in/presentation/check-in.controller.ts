@@ -4,7 +4,7 @@ import { ScopesGuard } from '../../../common/auth/guards/scopes.guard.js';
 import { Scopes } from '../../../common/auth/decorators/scopes.decorator.js';
 import { BookingOwnershipGuard } from '../../bookings/presentation/guards/booking-ownership.guard.js';
 import { CurrentBooking } from '../../bookings/presentation/decorators/current-booking.decorator.js';
-import type { BookingRecord } from '../../bookings/domain/ports/booking-repository.port.js';
+import type { BookingSnapshot } from '../../bookings/application/bookings.facade.js';
 import { CheckInService } from '../application/check-in.service.js';
 import type { CheckInResponseDto } from './dto/check-in.dto.js';
 import type { BoardingPassListResponseDto } from './dto/boarding-pass.dto.js';
@@ -17,13 +17,13 @@ export class CheckInController {
   @Post('check-in')
   @Scopes('flights:book')
   @HttpCode(HttpStatus.OK)
-  checkIn(@CurrentBooking() booking: BookingRecord): Promise<CheckInResponseDto> {
+  checkIn(@CurrentBooking() booking: BookingSnapshot): Promise<CheckInResponseDto> {
     return this.checkInService.performCheckIn(booking);
   }
 
   @Get('boarding-passes')
   @Scopes('flights:read')
-  getBoardingPasses(@CurrentBooking() booking: BookingRecord): Promise<BoardingPassListResponseDto> {
+  getBoardingPasses(@CurrentBooking() booking: BookingSnapshot): Promise<BoardingPassListResponseDto> {
     return this.checkInService.getBoardingPasses(booking);
   }
 }

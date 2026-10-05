@@ -1,9 +1,9 @@
 import { ProblemDetailsException } from '../../../common/problem-details/problem-details.exception.js';
-import type { BookingRecord, PurchasedFare } from '../../bookings/domain/ports/booking-repository.port.js';
-import type { ReservationSystemPort } from '../../bookings/domain/ports/reservation-system.port.js';
+import type { BookingSnapshot, PurchasedFare } from '../../bookings/application/bookings.facade.js';
+import type { PostSaleGdsPort } from './ports/post-sale-gds.port.js';
 
 /** Las operaciones posventa requieren una reserva confirmada (409 BOOKING_NOT_CONFIRMED). */
-export function assertConfirmed(booking: BookingRecord): void {
+export function assertConfirmed(booking: BookingSnapshot): void {
   if (booking.status === 'CANCELLED') {
     throw new ProblemDetailsException({ status: 409, code: 'ALREADY_CANCELLED', title: 'La reserva ya fue cancelada.' });
   }
@@ -17,13 +17,13 @@ export function assertConfirmed(booking: BookingRecord): void {
   }
 }
 
-export async function hasDeparted(fare: PurchasedFare, reservationSystem: ReservationSystemPort): Promise<boolean> {
-  const times = await reservationSystem.segmentTimes(fare.segmentIds[0]!);
+export async function hasDeparted(fare: PurchasedFare, gds: PostSaleGdsPort): Promise<boolean> {
+  const times = await gds.segmentTimes(fare.segmentIds[0]!);
   return !times || times.departureUtc <= Date.now();
 }
 
-export function findFare(booking: BookingRecord, itineraryId: string): PurchasedFare {
-  const fare = booking.internal.fares.find((candidate) => candidate.itineraryId === itineraryId);
+export function findFare(booking: BookingSnapshot, itineraryId: string): PurchasedFare {
+  const fare = booking.fares.find((candidate) => candidate.itineraryId === itineraryId);
   if (!fare) {
     // El contrato no documenta 400/404 en estos endpoints (HALL-20); es un error de validación de la petición.
     throw new ProblemDetailsException({

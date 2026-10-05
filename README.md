@@ -14,9 +14,8 @@ arquitectura modular, seguridad, pruebas automatizadas y trazabilidad de cada de
 | [`frontend/`](frontend) | **Sitio web** (React + TypeScript + Vite), verde y blanco |
 | [`dev-auth/`](dev-auth) | Servidor de **autenticación de desarrollo**: emite los JWT que verifica la API (sin dependencias) |
 | [`CAMBIOS.md`](CAMBIOS.md) | Plan por fases, aprobado antes de implementar, con el resultado y las desviaciones de cada fase |
-| [`HALLAZGOS.md`](HALLAZGOS.md) | Inconsistencias del contrato pendientes de decisión con el líder de booking |
-| [`HALLAZGOS2.md`](HALLAZGOS2.md) | Revisión de la puesta en marcha local |
-| [`vuelos/AUDITORIA.md`](vuelos/AUDITORIA.md) | Auditoría técnica (OpenCode) y su seguimiento |
+| [`HALLAZGOS.md`](HALLAZGOS.md) | Hallazgos verificados: entorno local, despliegue en la nube, plantilla del booking y contrato |
+| [`vuelos/AUDITORIA.md`](vuelos/AUDITORIA.md) | Auditoría técnica y su seguimiento |
 
 ## Requisitos
 
@@ -68,4 +67,4 @@ se niega a arrancar con ellos en producción.
 
 1. Cada cambio se propone primero en `CAMBIOS.md` y se aprueba antes de implementarse.
 2. El contrato **no se modifica**: las inconsistencias se registran en `HALLAZGOS.md`.
-3. OpenCode audita el resultado (`vuelos/AUDITORIA.md`).
+3. Gemini audita el resultado (`vuelos/AUDITORIA.md`) y el responsable del proyecto supervisa el funcionamiento antes de cada commit.

@@ -1,17 +1,15 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { stableHash } from '../../../common/hash/stable-hash.js';
 import { ProblemDetailsException } from '../../../common/problem-details/problem-details.exception.js';
-import { seatHolder } from '../../bookings/application/seat-assignment.service.js';
+import { seatHolder } from '../../../common/seating/seat-assigner.js';
 import {
-  BOOKING_REPOSITORY_PORT,
-  type BookingRecord,
-  type BookingRepositoryPort,
+  BookingsFacade,
+  type BookingSnapshot,
   type PurchasedFare,
-} from '../../bookings/domain/ports/booking-repository.port.js';
-import {
-  RESERVATION_SYSTEM_PORT,
-  type ReservationSystemPort,
-} from '../../bookings/domain/ports/reservation-system.port.js';
+  type SeatAssignment,
+} from '../../bookings/application/bookings.facade.js';
+import { CHECK_IN_REPOSITORY_PORT, type CheckInRepositoryPort } from '../domain/ports/check-in-repository.port.js';
+import { DEPARTURE_CONTROL_PORT, type DepartureControlPort } from '../domain/ports/departure-control.port.js';
 import type { CheckedInPassengerDto, CheckInResponseDto } from '../presentation/dto/check-in.dto.js';
 import type { BoardingPassDto, BoardingPassListResponseDto } from '../presentation/dto/boarding-pass.dto.js';
 
@@ -22,12 +20,16 @@ const BOARDING_GROUP_BY_FARE: Record<string, string> = { DOSEL: 'A', BOSQUE: 'B'
 /**
  * Check-in del próximo itinerario de la reserva que aún no sale. Repetirlo devuelve el mismo
  * resultado (operación idempotente; el contrato no exige Idempotency-Key aquí, HALL-12).
+ *
+ * Los check-ins son datos propios de este dominio (BD futura: `check-in`). La reserva se lee como
+ * snapshot; los asientos asignados automáticamente se registran en ella mediante `BookingsFacade`.
  */
 @Injectable()
 export class CheckInService {
   constructor(
-    @Inject(BOOKING_REPOSITORY_PORT) private readonly bookingRepository: BookingRepositoryPort,
-    @Inject(RESERVATION_SYSTEM_PORT) private readonly reservationSystem: ReservationSystemPort,
+    private readonly bookings: BookingsFacade,
+    @Inject(CHECK_IN_REPOSITORY_PORT) private readonly checkIns: CheckInRepositoryPort,
+    @Inject(DEPARTURE_CONTROL_PORT) private readonly departureControl: DepartureControlPort,
   ) {}
 
   /** Apertura de la ventana, configurable con CHECK_IN_WINDOW_HOURS (por defecto 48 h). */
@@ -35,7 +37,7 @@ export class CheckInService {
     return Number(process.env.CHECK_IN_WINDOW_HOURS ?? 48);
   }
 
-  async performCheckIn(booking: BookingRecord): Promise<CheckInResponseDto> {
+  async performCheckIn(booking: BookingSnapshot): Promise<CheckInResponseDto> {
     if (booking.status !== 'CONFIRMED') {
       throw new ProblemDetailsException({
         status: 409,
@@ -45,11 +47,11 @@ export class CheckInService {
     }
 
     const fare = await this.nextItinerary(booking);
-    const checkIns = structuredClone(booking.internal.checkIns);
-    const passengers = structuredClone(booking.passengers ?? []);
+    const checkIns = await this.checkIns.findByBooking(booking.bookingId);
+    const newSeats: SeatAssignment[] = [];
     const results: CheckedInPassengerDto[] = [];
 
-    for (const passenger of passengers) {
+    for (const passenger of booking.passengers ?? []) {
       const segments = [];
       for (const segmentId of fare.segmentIds) {
         const existing = checkIns[segmentId]?.[passenger.passengerId];
@@ -59,11 +61,12 @@ export class CheckInService {
           if (passenger.passengerType === 'INFANT') {
             seat = null;
           } else {
+            const chosen = passenger.assignedSeats?.find((assigned) => assigned.segmentId === segmentId)?.seatNumber;
             seat =
-              passenger.assignedSeats?.find((assigned) => assigned.segmentId === segmentId)?.seatNumber ??
-              (await this.reservationSystem.autoAssignSeat(segmentId, fare.cabinClass, seatHolder(booking.bookingId, passenger.passengerId)));
-            if (seat && !passenger.assignedSeats?.some((assigned) => assigned.segmentId === segmentId)) {
-              passenger.assignedSeats = [...(passenger.assignedSeats ?? []), { segmentId, seatNumber: seat }];
+              chosen ??
+              (await this.departureControl.autoAssignSeat(segmentId, fare.cabinClass, seatHolder(booking.bookingId, passenger.passengerId)));
+            if (seat && !chosen) {
+              newSeats.push({ passengerId: passenger.passengerId, segmentId, seatNumber: seat });
             }
           }
           if (seat !== undefined) {
@@ -84,12 +87,8 @@ export class CheckInService {
       });
     }
 
-    const now = new Date().toISOString();
-    await this.bookingRepository.update(booking.bookingId, {
-      passengers,
-      internal: { ...booking.internal, checkIns },
-      changes: [...(booking.changes ?? []), { changedAt: now, description: `Check-in del itinerario ${fare.itineraryId}.` }],
-    });
+    await this.checkIns.save(booking.bookingId, checkIns);
+    await this.bookings.recordSeatAssignments(booking.bookingId, newSeats, `Check-in del itinerario ${fare.itineraryId}.`);
 
     return {
       bookingId: booking.bookingId,
@@ -98,11 +97,13 @@ export class CheckInService {
     };
   }
 
-  async getBoardingPasses(booking: BookingRecord): Promise<BoardingPassListResponseDto> {
+  /** Pases de los segmentos ACTUALES de la reserva: un check-in de un vuelo reemplazado por un cambio de fecha no cuenta. */
+  async getBoardingPasses(booking: BookingSnapshot): Promise<BoardingPassListResponseDto> {
+    const checkIns = await this.checkIns.findByBooking(booking.bookingId);
     const passes: BoardingPassDto[] = [];
-    for (const fare of booking.internal.fares) {
+    for (const fare of booking.fares) {
       for (const segmentId of fare.segmentIds) {
-        const checkedIn = booking.internal.checkIns[segmentId] ?? {};
+        const checkedIn = checkIns[segmentId] ?? {};
         for (const passenger of booking.passengers ?? []) {
           if (!(passenger.passengerId in checkedIn)) continue;
           const seat = checkedIn[passenger.passengerId] ?? 'INF';
@@ -129,10 +130,10 @@ export class CheckInService {
   }
 
   /** Primer itinerario aún no despegado; valida la ventana de check-in (422 del contrato). */
-  private async nextItinerary(booking: BookingRecord): Promise<PurchasedFare> {
+  private async nextItinerary(booking: BookingSnapshot): Promise<PurchasedFare> {
     const now = Date.now();
-    for (const fare of booking.internal.fares) {
-      const times = await this.reservationSystem.segmentTimes(fare.segmentIds[0]!);
+    for (const fare of booking.fares) {
+      const times = await this.departureControl.segmentTimes(fare.segmentIds[0]!);
       if (!times || times.departureUtc <= now) continue;
 
       if (now < times.departureUtc - this.windowHours * 3_600_000) {

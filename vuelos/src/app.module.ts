@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { CommonModule } from './common/common.module.js';
 import { MockGdsModule } from './infrastructure/mock-gds/mock-gds.module.js';
+import { MockPaymentModule } from './infrastructure/mock-payment/mock-payment.module.js';
 import { SearchModule } from './modules/search/search.module.js';
 import { OffersModule } from './modules/offers/offers.module.js';
 import { BookingsModule } from './modules/bookings/bookings.module.js';
@@ -13,6 +14,7 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module.js';
   imports: [
     CommonModule,
     MockGdsModule,
+    MockPaymentModule,
     SearchModule,
     OffersModule,
     BookingsModule,

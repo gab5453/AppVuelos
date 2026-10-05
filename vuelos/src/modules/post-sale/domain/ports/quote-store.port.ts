@@ -9,7 +9,10 @@ export interface StoredQuote<T> {
   payload: T;
 }
 
-/** Puerto de almacenamiento de cotizaciones. Hoy en memoria; reemplazar por DB/caché compartida. */
+/**
+ * Puerto de almacenamiento de cotizaciones de cancelación y ofertas de cambio. **Base de datos futura:
+ * `post-sale`**. Privado de post-sale. Hoy en memoria; reemplazar por DB o caché.
+ */
 export interface QuoteStorePort<T> {
   save(quote: StoredQuote<T>): Promise<void>;
   find(id: string): Promise<StoredQuote<T> | undefined>;

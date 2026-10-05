@@ -2,7 +2,7 @@
 
 ## Rol
 
-OpenCode actúa como auditor técnico del backend.
+Gemini actúa como auditor técnico del backend.
 
 No debe modificar archivos durante una auditoría, salvo que el estudiante solicite explícitamente una corrección.
 

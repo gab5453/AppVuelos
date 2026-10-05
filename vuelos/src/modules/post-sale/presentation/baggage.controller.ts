@@ -10,7 +10,7 @@ import {
 } from '../../../common/validation/forbid-unknown-properties.guard.js';
 import { BookingOwnershipGuard } from '../../bookings/presentation/guards/booking-ownership.guard.js';
 import { CurrentBooking } from '../../bookings/presentation/decorators/current-booking.decorator.js';
-import type { BookingRecord } from '../../bookings/domain/ports/booking-repository.port.js';
+import type { BookingSnapshot } from '../../bookings/application/bookings.facade.js';
 import { BaggageService } from '../application/baggage.service.js';
 import { AddBaggageRequestDto } from './dto/baggage.dto.js';
 import type { BaggageAddedResponseDto, BaggageOptionsResponseDto } from './dto/baggage.dto.js';
@@ -22,7 +22,7 @@ export class BaggageController {
 
   @Get('baggage-options')
   @Scopes('flights:read')
-  getOptions(@CurrentBooking() booking: BookingRecord): Promise<BaggageOptionsResponseDto> {
+  getOptions(@CurrentBooking() booking: BookingSnapshot): Promise<BaggageOptionsResponseDto> {
     return this.baggageService.getOptions(booking);
   }
 
@@ -32,7 +32,7 @@ export class BaggageController {
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async addBaggage(
-    @CurrentBooking() booking: BookingRecord,
+    @CurrentBooking() booking: BookingSnapshot,
     @Body() body: AddBaggageRequestDto,
     @Res({ passthrough: true }) response: Response,
   ): Promise<BaggageAddedResponseDto | undefined> {

@@ -17,8 +17,6 @@ export interface BookingInternalState {
   holdId: string;
   counts: PassengerCounts;
   fares: PurchasedFare[];
-  /** Check-in por segmento y pasajero; el valor es el asiento (`null` para infantes). */
-  checkIns: Record<string, Record<string, string | null>>;
 }
 
 export interface BookingRecord extends BookingDetailDto {
@@ -28,7 +26,12 @@ export interface BookingRecord extends BookingDetailDto {
 
 export const BOOKING_REPOSITORY_PORT = Symbol('BOOKING_REPOSITORY_PORT');
 
-/** Puerto de persistencia de reservas. Hoy en memoria; reemplazar por el PNR store/GDS real. */
+/**
+ * Puerto de persistencia de reservas. **Base de datos futura: `bookings`** (reserva, pasajeros, tickets,
+ * historial y tarifas compradas). Es PRIVADO del dominio bookings: ningún otro dominio lo usa. Los demás
+ * leen y modifican reservas solo a través de `BookingsFacade`.
+ * Hoy en memoria; reemplazar por PostgreSQL/PNR store sin cambiar controllers ni contrato.
+ */
 export interface BookingRepositoryPort {
   create(record: BookingRecord): Promise<BookingRecord>;
   findById(bookingId: string): Promise<BookingRecord | undefined>;

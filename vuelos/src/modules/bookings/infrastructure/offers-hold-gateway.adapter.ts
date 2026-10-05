@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { HoldService, HoldUnavailableError } from '../../offers/application/hold.service.js';
-import type { HoldRecord } from '../../offers/domain/ports/hold-repository.port.js';
+import { HoldService, HoldUnavailableError, type HoldRecord } from '../../offers/application/hold.service.js';
 import type { HoldGatewayPort, HoldLookup } from '../domain/ports/hold-gateway.port.js';
 
 /** Adapter in-process hacia el dominio offers. Al separar en microservicios, se reemplaza por un cliente HTTP. */

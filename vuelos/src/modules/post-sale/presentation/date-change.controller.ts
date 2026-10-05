@@ -10,7 +10,7 @@ import {
 } from '../../../common/validation/forbid-unknown-properties.guard.js';
 import { BookingOwnershipGuard } from '../../bookings/presentation/guards/booking-ownership.guard.js';
 import { CurrentBooking } from '../../bookings/presentation/decorators/current-booking.decorator.js';
-import type { BookingRecord } from '../../bookings/domain/ports/booking-repository.port.js';
+import type { BookingSnapshot } from '../../bookings/application/bookings.facade.js';
 import { DateChangeService } from '../application/date-change.service.js';
 import { DateChangeRequestDto, DateChangeSearchRequestDto } from './dto/date-change.dto.js';
 import type { DateChangeSearchResponseDto } from './dto/date-change.dto.js';
@@ -25,7 +25,7 @@ export class DateChangeController {
   @Scopes('flights:read')
   @HttpCode(HttpStatus.OK)
   search(
-    @CurrentBooking() booking: BookingRecord,
+    @CurrentBooking() booking: BookingSnapshot,
     @Body() body: DateChangeSearchRequestDto,
   ): Promise<DateChangeSearchResponseDto> {
     return this.dateChangeService.search(booking, body);
@@ -37,7 +37,7 @@ export class DateChangeController {
   @UseInterceptors(IdempotencyInterceptor)
   @HttpCode(HttpStatus.OK)
   async confirm(
-    @CurrentBooking() booking: BookingRecord,
+    @CurrentBooking() booking: BookingSnapshot,
     @Body() body: DateChangeRequestDto,
     @Res({ passthrough: true }) response: Response,
   ): Promise<BookingDetail | undefined> {

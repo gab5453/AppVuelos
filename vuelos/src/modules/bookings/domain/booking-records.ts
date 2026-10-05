@@ -1,17 +1,9 @@
 import { randomInt } from 'node:crypto';
 import type { Ticket } from '../../../common/contract-types/common.types.js';
-import type { BookingDetailDto } from '../presentation/dto/booking-detail.dto.js';
-import type { BookingRecord } from './ports/booking-repository.port.js';
 
 const PNR_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 /** Prefijo de 3 dígitos de los e-tickets. Ficticio, como el código de aerolínea (HALL-10). */
 const TICKET_PREFIX = '999';
-
-/** BookingDetail del contrato: nunca expone `ownerId` ni el estado interno. */
-export function toBookingDetail(record: BookingRecord): BookingDetailDto {
-  const { ownerId: _ownerId, internal: _internal, ...detail } = record;
-  return detail;
-}
 
 /** Localizador de 6 caracteres sin caracteres ambiguos (0/O, 1/I). */
 export function generatePnr(): string {

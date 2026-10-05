@@ -1,6 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { ProblemDetailsException } from '../../../common/problem-details/problem-details.exception.js';
-import { RESERVATION_SYSTEM_PORT, type ReservationSystemPort } from '../domain/ports/reservation-system.port.js';
+import { ProblemDetailsException } from '../problem-details/problem-details.exception.js';
 
 export interface SeatRequest {
   passengerId: string;
@@ -8,15 +6,26 @@ export interface SeatRequest {
   seatNumber: string;
 }
 
+/** Titular de un asiento en el GDS: la reserva y el pasajero. */
 export const seatHolder = (bookingId: string, passengerId: string) => `${bookingId}:${passengerId}`;
+
+/**
+ * Operaciones de asientos que cada dominio obtiene de SU propio port hacia el GDS.
+ * Esta librería no guarda datos: solo aplica las reglas de asignación.
+ */
+export interface SeatInventoryGateway {
+  seatInfo(segmentId: string, seatNumber: string): Promise<{ cabinClass: string; isAvailable: boolean; holder?: string } | undefined>;
+  assignSeat(segmentId: string, seatNumber: string, holder: string): Promise<boolean>;
+  releaseSeat(segmentId: string, seatNumber: string, holder: string): Promise<void>;
+}
 
 /**
  * Valida y asigna asientos elegidos por el pasajero (reserva y cambio de fecha).
  * Todo o nada: si un asiento falla, se liberan los asignados en la misma operación.
+ * Es código compartido sin estado (librería), no un servicio con datos: cada dominio lo usa con su propio gateway.
  */
-@Injectable()
-export class SeatAssignmentService {
-  constructor(@Inject(RESERVATION_SYSTEM_PORT) private readonly reservationSystem: ReservationSystemPort) {}
+export class SeatAssigner {
+  constructor(private readonly gateway: SeatInventoryGateway) {}
 
   /**
    * @param cabinBySegment cabina comprada en cada segmento.
@@ -34,7 +43,7 @@ export class SeatAssignmentService {
       if (seen.has(key)) throw seatTaken(request);
       seen.add(key);
 
-      const info = await this.reservationSystem.seatInfo(request.segmentId, request.seatNumber);
+      const info = await this.gateway.seatInfo(request.segmentId, request.seatNumber);
       if (!info) {
         throw new ProblemDetailsException({
           status: mismatchStatus,
@@ -55,7 +64,7 @@ export class SeatAssignmentService {
 
     const assigned: SeatRequest[] = [];
     for (const request of requests) {
-      if (!(await this.reservationSystem.assignSeat(request.segmentId, request.seatNumber, seatHolder(bookingId, request.passengerId)))) {
+      if (!(await this.gateway.assignSeat(request.segmentId, request.seatNumber, seatHolder(bookingId, request.passengerId)))) {
         await this.release(bookingId, assigned);
         throw seatTaken(request);
       }
@@ -65,7 +74,7 @@ export class SeatAssignmentService {
 
   async release(bookingId: string, seats: SeatRequest[]): Promise<void> {
     for (const seat of seats) {
-      await this.reservationSystem.releaseSeat(seat.segmentId, seat.seatNumber, seatHolder(bookingId, seat.passengerId));
+      await this.gateway.releaseSeat(seat.segmentId, seat.seatNumber, seatHolder(bookingId, seat.passengerId));
     }
   }
 }

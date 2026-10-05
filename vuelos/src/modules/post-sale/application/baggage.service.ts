@@ -1,18 +1,14 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { MoneyAmount } from '../../../common/contract-types/common.types.js';
-import { scaleMoney, sumMoney } from '../../../common/money/money.js';
+import { scaleMoney } from '../../../common/money/money.js';
+import { paymentProblem } from '../../../common/payments/payment-verification.js';
+import { MAX_EXTRA_BAGS } from '../../../common/policies/commercial-policy.js';
 import { ProblemDetailsException } from '../../../common/problem-details/problem-details.exception.js';
 import { DeferredTaskRunner } from '../../../common/scheduling/deferred-task-runner.js';
-import { paymentProblem } from '../../bookings/application/bookings.service.js';
-import { MAX_EXTRA_BAGS } from '../../bookings/domain/passenger-rules.js';
-import {
-  BOOKING_REPOSITORY_PORT,
-  type BookingRecord,
-  type BookingRepositoryPort,
-} from '../../bookings/domain/ports/booking-repository.port.js';
-import { PAYMENT_VERIFIER_PORT, type PaymentVerifierPort } from '../../bookings/domain/ports/payment-verifier.port.js';
-import { RESERVATION_SYSTEM_PORT, type ReservationSystemPort } from '../../bookings/domain/ports/reservation-system.port.js';
+import { BookingsFacade, type BookingSnapshot } from '../../bookings/application/bookings.facade.js';
 import { assertConfirmed, findFare, flightAlreadyDeparted, hasDeparted } from '../domain/post-sale-rules.js';
+import { POST_SALE_GDS_PORT, type PostSaleGdsPort } from '../domain/ports/post-sale-gds.port.js';
+import { POST_SALE_PAYMENT_PORT, type PostSalePaymentPort } from '../domain/ports/post-sale-payment.port.js';
 import type { AddBaggageRequestDto, BaggageAddedResponseDto, BaggageOptionsResponseDto } from '../presentation/dto/baggage.dto.js';
 
 export interface BaggageResult {
@@ -21,21 +17,22 @@ export interface BaggageResult {
   body?: BaggageAddedResponseDto;
 }
 
+/** Maletas extra posventa. Lee la reserva como snapshot y registra la compra mediante `BookingsFacade`. */
 @Injectable()
 export class BaggageService {
   constructor(
-    @Inject(BOOKING_REPOSITORY_PORT) private readonly bookingRepository: BookingRepositoryPort,
-    @Inject(RESERVATION_SYSTEM_PORT) private readonly reservationSystem: ReservationSystemPort,
-    @Inject(PAYMENT_VERIFIER_PORT) private readonly payments: PaymentVerifierPort,
+    private readonly bookings: BookingsFacade,
+    @Inject(POST_SALE_GDS_PORT) private readonly gds: PostSaleGdsPort,
+    @Inject(POST_SALE_PAYMENT_PORT) private readonly payments: PostSalePaymentPort,
     private readonly tasks: DeferredTaskRunner,
   ) {}
 
   /** Una opción por pasajero con asiento e itinerario aún no despegado. Los infantes no llevan equipaje facturado propio. */
-  async getOptions(booking: BookingRecord): Promise<BaggageOptionsResponseDto> {
+  async getOptions(booking: BookingSnapshot): Promise<BaggageOptionsResponseDto> {
     const options: BaggageOptionsResponseDto = [];
-    for (const fare of booking.internal.fares) {
-      if (await hasDeparted(fare, this.reservationSystem)) continue;
-      const price = await this.reservationSystem.extraBagPrice(fare.itineraryId);
+    for (const fare of booking.fares) {
+      if (await hasDeparted(fare, this.gds)) continue;
+      const price = await this.gds.extraBagPrice(fare.itineraryId);
       for (const passenger of booking.passengers ?? []) {
         if (passenger.passengerType === 'INFANT') continue;
         options.push({
@@ -50,7 +47,7 @@ export class BaggageService {
     return options;
   }
 
-  async addBaggage(booking: BookingRecord, request: AddBaggageRequestDto): Promise<BaggageResult> {
+  async addBaggage(booking: BookingSnapshot, request: AddBaggageRequestDto): Promise<BaggageResult> {
     assertConfirmed(booking);
     const fare = findFare(booking, request.itineraryId);
     const passenger = booking.passengers?.find((candidate) => candidate.passengerId === request.passengerId);
@@ -62,7 +59,7 @@ export class BaggageService {
         invalidParams: [{ name: 'passengerId', reason: 'unknown passenger or INFANT' }],
       });
     }
-    if (await hasDeparted(fare, this.reservationSystem)) throw flightAlreadyDeparted();
+    if (await hasDeparted(fare, this.gds)) throw flightAlreadyDeparted();
 
     const already = purchased(booking, request.passengerId, request.itineraryId);
     if (already + request.quantity > MAX_EXTRA_BAGS) {
@@ -74,7 +71,7 @@ export class BaggageService {
       });
     }
 
-    const unitPrice = (await this.reservationSystem.extraBagPrice(request.itineraryId))!;
+    const unitPrice = (await this.gds.extraBagPrice(request.itineraryId))!;
     const amount = scaleMoney(unitPrice, request.quantity);
     // El endpoint solo documenta 409 como error: los problemas de pago se informan con 409.
     const verification = await this.payments.verify(request.payment.paymentReference, amount);
@@ -83,13 +80,13 @@ export class BaggageService {
 
     if (verification === 'PENDING') {
       this.tasks.schedule(`baggage:${booking.bookingId}`, async () => {
-        await this.apply(booking.bookingId, request, amount);
+        await this.record(booking.bookingId, request, amount);
       });
       return { statusCode: 202 };
     }
 
-    const updated = await this.apply(booking.bookingId, request, amount);
-    const conditions = await this.reservationSystem.fareConditions(fare.cabinClass, fare.fareBrand);
+    const updated = await this.record(booking.bookingId, request, amount);
+    const conditions = await this.gds.fareConditions(fare.cabinClass, fare.fareBrand);
     return {
       statusCode: 200,
       body: {
@@ -101,35 +98,17 @@ export class BaggageService {
     };
   }
 
-  private async apply(bookingId: string, request: AddBaggageRequestDto, amount: MoneyAmount): Promise<BookingRecord> {
-    const booking = (await this.bookingRepository.findById(bookingId))!;
-    const passengers = structuredClone(booking.passengers ?? []).map((passenger) => {
-      if (passenger.passengerId !== request.passengerId) return passenger;
-      const bags = passenger.extraBaggage ?? [];
-      const existing = bags.find((bag) => bag.itineraryId === request.itineraryId);
-      return {
-        ...passenger,
-        extraBaggage: existing
-          ? bags.map((bag) => (bag === existing ? { ...bag, quantity: bag.quantity + request.quantity } : bag))
-          : [...bags, { itineraryId: request.itineraryId, quantity: request.quantity }],
-      };
-    });
-    const now = new Date().toISOString();
-    return this.bookingRepository.update(bookingId, {
-      passengers,
-      grandTotal: sumMoney([booking.grandTotal, amount]),
-      changes: [
-        ...(booking.changes ?? []),
-        {
-          changedAt: now,
-          description: `${request.quantity} maleta(s) extra para ${request.passengerId} en ${request.itineraryId} (${amount.total} ${amount.currency}).`,
-        },
-      ],
+  private record(bookingId: string, request: AddBaggageRequestDto, amount: MoneyAmount): Promise<BookingSnapshot> {
+    return this.bookings.recordBaggagePurchase(bookingId, {
+      passengerId: request.passengerId,
+      itineraryId: request.itineraryId,
+      quantity: request.quantity,
+      amount,
     });
   }
 }
 
-function purchased(booking: BookingRecord, passengerId: string, itineraryId: string): number {
+function purchased(booking: BookingSnapshot, passengerId: string, itineraryId: string): number {
   return (
     booking.passengers
       ?.find((passenger) => passenger.passengerId === passengerId)
