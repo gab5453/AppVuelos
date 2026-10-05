@@ -378,7 +378,24 @@ Los adaptadores actuales devuelven respuestas vacías o con `0.00`. Para que Swa
 
 ---
 
-## Fase 8 — Publicación en GitHub (aprobada 2026-10-04)
+## Fase 8 — Publicación en GitHub (aprobada 2026-10-04) — ✅ IMPLEMENTADA
+
+> **Resultado:**
+> - `.gitignore` en la raíz (nuevo) y `frontend/.gitignore` corregido: ahora ignora `.env` y `.env.*` y conserva `.env.example`.
+> - `README.md` general en la raíz (nuevo).
+> - **Revisión antes de subir:** 230 archivos. Quedan fuera `node_modules`, `dist` y la caché de TypeScript. El único `.env*` incluido es
+>   `frontend/.env.example`, con dos URLs de localhost. Ningún archivo pesa más de 300 KB. No hay rutas del equipo local, correos personales,
+>   tokens ni claves privadas. El secreto de desarrollo aparece solo en `dev-auth/server.mjs` y en `vuelos/src/common/auth/auth.config.ts`
+>   (es público a propósito y se rechaza en producción).
+> - Commit `ede437d` en `main` y etiqueta **`v0.1.0`**, subidos a `https://github.com/gab5453/AppVuelos`. Verificado: el remoto coincide
+>   con el commit local.
+>
+> **Desviaciones y notas (revísalas):**
+> - **No planeado:** `vuelos/` tenía un repositorio git propio, vacío (0 commits, sin remotos), creado por `nest new` el 22/09. Impedía
+>   incluir la carpeta en el monorepo. **No se borró**: se movió como respaldo fuera del proyecto, a la carpeta temporal de la sesión.
+>   No había historia que perder.
+> - **El repositorio quedó PÚBLICO.** En la Fase 8 se había sugerido privado porque el contrato incluye el nombre y el correo de su autor
+>   (`info.contact`). Conviene confirmarlo con el líder de booking o cambiar la visibilidad en GitHub (Settings → General → Danger Zone).
 
 **Decisión:** un solo repositorio (monorepo) con backend, frontend y dev-auth en carpetas separadas, publicado en
 `https://github.com/gab5453/AppVuelos`. **La estructura de carpetas se sube tal cual** (`vuelos/`, `frontend/`, `dev-auth/` y los documentos
