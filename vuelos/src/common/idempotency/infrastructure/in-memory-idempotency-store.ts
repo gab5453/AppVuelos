@@ -1,0 +1,81 @@
+import { Injectable } from '@nestjs/common';
+import type {
+  IdempotencyClaimResult,
+  IdempotencyRecord,
+  IdempotencyStorePort,
+} from '../interfaces/idempotency-store.port.js';
+
+interface StoredClaim {
+  fingerprint: string;
+  status: 'IN_PROGRESS' | 'COMPLETED';
+  record?: IdempotencyRecord;
+  expiresAt: number;
+}
+
+/** Ventana durante la cual una key protege contra reintentos duplicados. */
+export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Almacenamiento en memoria; se pierde al reiniciar el proceso. Reemplazar por Redis/DB cuando
+ * exista infraestructura compartida entre instancias.
+ *
+ * `claim` es una sección síncrona (sin `await` de por medio) entre la lectura y la escritura
+ * del Map, por lo que ninguna petición concurrente puede intercalarse entre ambas: es atómica
+ * en la práctica dentro de un mismo proceso Node de un solo hilo.
+ * Las keys expiran a las 24 h y se purgan de forma perezosa, para que la memoria no crezca sin límite.
+ */
+@Injectable()
+export class InMemoryIdempotencyStore implements IdempotencyStorePort {
+  private readonly claims = new Map<string, StoredClaim>();
+
+  /** Reloj reemplazable en pruebas. */
+  now: () => number = () => Date.now();
+
+  async claim(key: string, requestFingerprint: string): Promise<IdempotencyClaimResult> {
+    this.purgeExpired();
+    const existing = this.claims.get(key);
+
+    if (!existing) {
+      this.claims.set(key, {
+        fingerprint: requestFingerprint,
+        status: 'IN_PROGRESS',
+        expiresAt: this.now() + IDEMPOTENCY_TTL_MS,
+      });
+      return { outcome: 'CLAIMED' };
+    }
+
+    if (existing.fingerprint !== requestFingerprint) {
+      return { outcome: 'CONFLICT' };
+    }
+
+    if (existing.status === 'IN_PROGRESS') {
+      return { outcome: 'IN_PROGRESS' };
+    }
+
+    return { outcome: 'COMPLETED', record: existing.record! };
+  }
+
+  async complete(key: string, record: IdempotencyRecord): Promise<void> {
+    const existing = this.claims.get(key);
+    this.claims.set(key, {
+      fingerprint: existing?.fingerprint ?? '',
+      status: 'COMPLETED',
+      record,
+      expiresAt: existing?.expiresAt ?? this.now() + IDEMPOTENCY_TTL_MS,
+    });
+  }
+
+  async release(key: string): Promise<void> {
+    const existing = this.claims.get(key);
+    if (existing?.status === 'IN_PROGRESS') {
+      this.claims.delete(key);
+    }
+  }
+
+  private purgeExpired(): void {
+    const now = this.now();
+    for (const [key, claim] of this.claims) {
+      if (claim.expiresAt <= now) this.claims.delete(key);
+    }
+  }
+}

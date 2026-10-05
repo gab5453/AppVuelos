@@ -1,0 +1,54 @@
+# ── Dependencias ──
+node_modules/
+
+# ── Builds y cachés ──
+dist/
+dist-ssr/
+build/
+*.tsbuildinfo
+.vite/
+.cache/
+
+# ── Pruebas ──
+coverage/
+.nyc_output/
+
+# ── Variables de entorno (nunca subir secretos) ──
+.env
+.env.*
+!.env.example
+*.local
+
+# ── Logs y datos de ejecución ──
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+pids/
+*.pid
+*.pid.lock
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# ── Temporales ──
+.temp/
+.tmp/
+tmp/
+
+# ── Sistema operativo ──
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Editores ──
+.idea/
+*.sublime-workspace
+*.suo
+*.sw?
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# ── Configuración local de asistentes ──
+.claude/settings.local.json

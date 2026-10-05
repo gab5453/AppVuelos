@@ -1,0 +1,1211 @@
+# =====================================================================================
+# GDS Flight Core API - Contrato GraphQL
+# -------------------------------------------------------------------------------------
+# Contrato base para la implementación GraphQL del proyecto "vuelos" (Reto 1).
+# Derivado de:
+#   - contract/vuelos-openapi.yaml (fuente de verdad REST, v1.5.0.0)
+#   - src/ (módulos search, offers, bookings, post-sale, check-in, flight-status,
+#     webhooks y la infraestructura común: auth, idempotency, problem-details, validation)
+#
+# Estructura del archivo:
+#   info            -> metadatos del contrato
+#   transport       -> endpoint, headers y convenciones HTTP de GraphQL
+#   security        -> OAuth2, scopes y reglas de propiedad (ownerId desde JWT)
+#   idempotency     -> reglas de Idempotency-Key aplicadas a mutations
+#   errors          -> mapeo ProblemDetails -> GraphQL errors (extensions)
+#   scalars         -> definición y validación de los scalars personalizados
+#   enumMappings    -> equivalencias de enums REST cuyo valor no es válido en GraphQL
+#   operations      -> trazabilidad operación GraphQL <-> endpoint REST
+#   schema          -> SDL GraphQL completo (listo para copiar a un archivo .graphql)
+# =====================================================================================
+
+info:
+  title: GDS Flight Core API (GraphQL)
+  version: 1.0.0
+  basedOnRestContract:
+    file: contract/vuelos-openapi.yaml
+    version: 1.5.0.0
+  description: >-
+    Microservicio centralizado para búsqueda, ofertas, retención (hold), reservas,
+    emisión de tickets, postventa, check-in, estado de vuelos y webhooks.
+    El dueño de la reserva (ownerId) se infiere exclusivamente del claim `sub` del JWT
+    y nunca es un argumento controlado por el cliente. La lógica de pagos (tarjetas, 3DS,
+    autorización, captura, reembolsos financieros), facturación y gestión de clientes
+    pertenece a otros dominios; esta API solo recibe `paymentReference`.
+  contact:
+    name: Alejandro Sebastián Flores Lugmaña
+    email: alejandro.floreslu@outlook.com
+
+transport:
+  endpoints:
+    - url: https://api.booking-hub.com/flights/v1/graphql
+      description: Producción
+    - url: https://sandbox.api.booking-hub.com/flights/v1/graphql
+      description: Sandbox
+  httpMethods:
+    query: [GET, POST]
+    mutation: [POST]
+    subscription: WebSocket (protocolo graphql-transport-ws) en /graphql
+  contentType: application/json
+  responseContentType: application/graphql-response+json
+  headers:
+    Authorization:
+      required: false
+      description: >-
+        `Bearer <JWT>`. Obligatorio para toda operación que no esté marcada con @public.
+    X-Device-Fingerprint:
+      required: conditional
+      appliesTo: [Query.searchFlights]
+      description: >-
+        Obligatorio en `searchFlights` (equivale al header requerido en POST /search).
+        Si falta, se responde error VALIDATION_FAILED con invalidParams
+        [{ name: "X-Device-Fingerprint", reason: "must be present" }].
+  httpStatusPolicy: >-
+    Las respuestas GraphQL devuelven HTTP 200 cuando la operación fue ejecutada (aunque
+    existan errores de negocio en `errors`). Se devuelve HTTP 400 solo para documentos
+    GraphQL inválidos (parse/validation) y HTTP 401 cuando el token es inválido o ausente
+    en una operación protegida. El status HTTP equivalente de REST viaja en
+    `errors[].extensions.status`.
+  limits:
+    maxQueryDepth: 10
+    maxQueryComplexity: 1000
+    introspection: habilitada solo en Sandbox
+    rateLimit: >-
+      Al exceder el límite se responde error RATE_LIMIT_EXCEEDED (status 429) con
+      `extensions.retryAfter` en segundos y header HTTP `Retry-After`.
+
+security:
+  scheme: OAuth2
+  flows:
+    authorizationCode:
+      authorizationUrl: https://auth.booking-hub.com/oauth2/authorize
+      tokenUrl: https://auth.booking-hub.com/oauth2/token
+    clientCredentials:
+      tokenUrl: https://auth.booking-hub.com/oauth2/token
+  scopes:
+    flights:read: Leer reservas, holds, tickets, pases de abordar y cotizaciones
+    flights:hold: Bloquear y liberar inventario
+    flights:book: Comprar y alterar reservas (reserva, maletas, cambio de fecha, check-in)
+    flights:cancel: Cancelar reservas
+    flights:webhooks: Gestionar suscripciones de webhooks
+  directives:
+    "@public": La operación no requiere token (searchFlights, seatMap, flightStatus).
+    "@auth(scopes)": Requiere token válido y TODOS los scopes listados.
+  rules:
+    - El `ownerId` se toma de `sub` del JWT; ningún input acepta ownerId/customerId.
+    - >-
+      Toda operación que recibe `bookingId` (y los campos anidados de Booking) valida
+      propiedad: si la reserva no existe o pertenece a otro `sub`, se responde
+      NOT_FOUND (status 404) sin distinguir ambos casos (prevención de IDOR).
+    - El `ownerId` nunca se expone en ningún tipo de salida.
+    - >-
+      Scope insuficiente -> error FORBIDDEN (status 403). Token ausente/inválido ->
+      error UNAUTHENTICATED (status 401).
+
+idempotency:
+  argument: idempotencyKey
+  type: UUID!
+  appliesTo:
+    - Mutation.holdInventory
+    - Mutation.createBooking
+    - Mutation.addBaggage
+    - Mutation.confirmDateChange
+    - Mutation.cancelBooking
+  alternativeHeader: >-
+    Por compatibilidad con clientes REST también se acepta el header `Idempotency-Key`
+    cuando el documento contiene una única mutation; si ambos están presentes deben
+    coincidir.
+  rules:
+    - La clave debe ser un UUID; si falta o es inválida -> VALIDATION_FAILED (400) con invalidParams [{ name "idempotencyKey", reason "must be a valid UUID" }].
+    - La identidad de la operación = nombre de la mutation + clave + `sub` del usuario + hash (SHA-256) de los argumentos (sin idempotencyKey).
+    - Misma clave y mismos argumentos con operación completada -> se devuelve el resultado almacenado sin re-ejecutar.
+    - Misma clave con argumentos distintos -> VALIDATION_FAILED (409), invalidParams reason "CONFLICT".
+    - Misma clave con operación aún en curso -> VALIDATION_FAILED (409), invalidParams reason "IN_PROGRESS".
+    - Si la operación falla, la clave se libera y puede reutilizarse.
+
+errors:
+  format: >-
+    Cada error GraphQL replica el modelo ProblemDetails del contrato REST dentro de
+    `extensions`. `message` = `title` de ProblemDetails.
+  example:
+    errors:
+      - message: La reserva ya fue cancelada.
+        path: [cancelBooking]
+        extensions:
+          code: ALREADY_CANCELLED
+          status: 409
+          type: about:blank
+          title: La reserva ya fue cancelada.
+          detail: null
+          invalidParams: []
+    data:
+      cancelBooking: null
+  extensionsSchema:
+    code: { type: ProblemCode, required: true }
+    status: { type: Int, required: true, description: Status HTTP equivalente en REST }
+    type: { type: String, required: true, default: about:blank }
+    title: { type: String, required: true }
+    detail: { type: String, required: false }
+    invalidParams: { type: "[{ name: String, reason: String }]", required: false }
+    retryAfter: { type: Int, required: false, description: Segundos; solo para 409/429 }
+  statusMapping:
+    400: [VALIDATION_FAILED, PAYMENT_REFERENCE_INVALID]
+    401: [UNAUTHENTICATED]
+    403: [FORBIDDEN]
+    404: [NOT_FOUND]
+    409:
+      - SEAT_TAKEN
+      - AMOUNT_MISMATCH
+      - BOOKING_NOT_CONFIRMED
+      - BAGGAGE_LIMIT_EXCEEDED
+      - CUTOFF_PASSED
+      - FARE_NOT_CHANGEABLE
+      - FLIGHT_ALREADY_DEPARTED
+      - ALREADY_CANCELLED
+      - TICKET_ALREADY_ISSUED
+      - CHECK_IN_NOT_AVAILABLE
+      - VALIDATION_FAILED   # conflicto de Idempotency-Key
+    410: [OFFER_NO_LONGER_AVAILABLE, CHANGE_OFFER_EXPIRED, QUOTE_EXPIRED]
+    422:
+      - INFANT_SEAT_NOT_ALLOWED
+      - SEAT_CABIN_MISMATCH
+      - PAYMENT_NOT_AUTHORIZED
+      - PNR_CREATION_FAILED
+      - TICKET_ISSUANCE_FAILED
+      - CHECK_IN_FAILED
+      - BOARDING_PASS_NOT_AVAILABLE
+      - FLIGHT_STATUS_NOT_AVAILABLE
+    429: [RATE_LIMIT_EXCEEDED]
+    500: [INTERNAL_ERROR]
+  notes:
+    - >-
+      El enum REST de ProblemDetails.code no define valores para 401/403/404/500 (el
+      backend REST usa VALIDATION_FAILED como último recurso). En GraphQL se agregan
+      UNAUTHENTICATED, FORBIDDEN, NOT_FOUND e INTERNAL_ERROR para que los clientes puedan
+      discriminar errores de forma fiable.
+    - La validación de inputs aplica las mismas restricciones que OpenAPI (pattern, minItems, maxItems, minimum, maximum, formatos) y reporta cada violación en invalidParams.
+
+scalars:
+  UUID:
+    format: uuid
+    pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ (case-insensitive)
+  Date:
+    format: date (ISO-8601, YYYY-MM-DD)
+    pattern: ^\d{4}-\d{2}-\d{2}$
+  DateTime:
+    format: date-time (ISO-8601 / RFC 3339, ej. 2026-10-01T14:30:00Z)
+  IataCode:
+    description: Código IATA de aeropuerto
+    pattern: ^[A-Z]{3}$
+  CurrencyCode:
+    description: Código de moneda ISO-4217
+    pattern: ^[A-Z]{3}$
+  Decimal:
+    description: >-
+      Monto decimal serializado como String (ej. "125.40") para evitar pérdida de
+      precisión; equivale a los montos `type: string` del contrato REST.
+    pattern: ^-?\d+(\.\d{1,4})?$
+  URL:
+    format: uri (se permite host sin TLD, igual que la validación REST require_tld=false)
+
+enumMappings:
+  WebhookEventType:
+    description: >-
+      Los valores REST contienen puntos, inválidos en enums GraphQL. El valor REST se
+      usa en el payload HTTP del webhook (`eventType`); el valor GraphQL en el schema.
+    values:
+      BOOKING_CONFIRMED: booking.confirmed
+      BOOKING_FAILED: booking.failed
+      BOOKING_CHANGED: booking.changed
+      BOOKING_CANCELLED: booking.cancelled
+      BOOKING_BAGGAGE_ADDED: booking.baggage_added
+      HOLD_EXPIRED: hold.expired
+      FLIGHT_SCHEDULE_CHANGED: flight.schedule_changed
+      FLIGHT_CANCELLED: flight.cancelled
+      BOOKING_TICKET_ISSUING: booking.ticket_issuing
+      BOOKING_TICKET_ISSUED: booking.ticket_issued
+      BOOKING_TICKET_FAILED: booking.ticket_failed
+      BOOKING_CHECKED_IN: booking.checked_in
+  Gender:
+    values: { M: M, F: F, X: X }
+
+operations:
+  # ---------------- Búsqueda y Catálogo ----------------
+  - graphql: Query.searchFlights
+    rest: POST /search
+    module: search
+    auth: public
+    headers: [X-Device-Fingerprint]
+    errors: [VALIDATION_FAILED, RATE_LIMIT_EXCEEDED]
+  - graphql: Query.seatMap
+    rest: GET /offers/{offerId}/seatmap
+    module: search
+    auth: public
+    errors: [NOT_FOUND, RATE_LIMIT_EXCEEDED]
+  # ---------------- Bloqueo de Cupos (Hold) ----------------
+  - graphql: Mutation.holdInventory
+    rest: POST /offers/hold
+    module: offers
+    auth: [flights:hold]
+    idempotent: true
+    errors: [VALIDATION_FAILED, SEAT_TAKEN, OFFER_NO_LONGER_AVAILABLE, INFANT_SEAT_NOT_ALLOWED]
+    notes: TTL por defecto del hold 15 minutos; estado inicial HELD.
+  - graphql: Query.hold
+    rest: GET /offers/hold/{holdId}
+    module: offers
+    auth: [flights:read]
+    errors: [NOT_FOUND]
+  - graphql: Mutation.releaseHold
+    rest: DELETE /offers/hold/{holdId}
+    module: offers
+    auth: [flights:hold]
+    errors: [NOT_FOUND]
+  # ---------------- Reservas y Emisión ----------------
+  - graphql: Query.bookings
+    rest: GET /bookings
+    module: bookings
+    auth: [flights:read]
+    notes: Solo reservas del `sub` actual. limit por defecto 10, máximo 50. Paginación por cursor.
+  - graphql: Mutation.createBooking
+    rest: POST /bookings
+    module: bookings
+    auth: [flights:book]
+    idempotent: true
+    notes: >-
+      outcome COMPLETED equivale a HTTP 201 (ticket emitido); outcome ACCEPTED equivale a
+      HTTP 202 (pago o emisión continúan de forma asíncrona; seguir el estado por
+      Query.booking o Subscription.bookingEvents).
+    errors:
+      - VALIDATION_FAILED
+      - AMOUNT_MISMATCH
+      - SEAT_TAKEN
+      - TICKET_ALREADY_ISSUED
+      - OFFER_NO_LONGER_AVAILABLE
+      - INFANT_SEAT_NOT_ALLOWED
+      - SEAT_CABIN_MISMATCH
+      - PAYMENT_REFERENCE_INVALID
+      - PAYMENT_NOT_AUTHORIZED
+      - PNR_CREATION_FAILED
+      - TICKET_ISSUANCE_FAILED
+  - graphql: Query.booking
+    rest: GET /bookings/{bookingId}
+    module: bookings
+    auth: [flights:read]
+    errors: [VALIDATION_FAILED, NOT_FOUND]
+  - graphql: Booking.tickets
+    rest: GET /bookings/{bookingId}/tickets
+    module: bookings
+    auth: [flights:read]
+  - graphql: Booking.ticket
+    rest: GET /bookings/{bookingId}/tickets/{ticketId}
+    module: bookings
+    auth: [flights:read]
+    errors: [NOT_FOUND]
+  # ---------------- Postventa ----------------
+  - graphql: Booking.baggageOptions
+    rest: GET /bookings/{bookingId}/baggage-options
+    module: post-sale
+    auth: [flights:read]
+  - graphql: Mutation.addBaggage
+    rest: POST /bookings/{bookingId}/baggage
+    module: post-sale
+    auth: [flights:book]
+    idempotent: true
+    notes: outcome COMPLETED = HTTP 200; outcome ACCEPTED = HTTP 202 (procesando con el GDS).
+    errors: [BOOKING_NOT_CONFIRMED, BAGGAGE_LIMIT_EXCEEDED, CUTOFF_PASSED, PAYMENT_REFERENCE_INVALID]
+  - graphql: Query.dateChangeOptions
+    rest: POST /bookings/{bookingId}/date-change/search
+    module: post-sale
+    auth: [flights:read]
+    notes: Operación de solo lectura; se modela como Query aunque en REST sea POST.
+    errors: [FARE_NOT_CHANGEABLE, FLIGHT_ALREADY_DEPARTED, BOOKING_NOT_CONFIRMED]
+  - graphql: Mutation.confirmDateChange
+    rest: POST /bookings/{bookingId}/date-change
+    module: post-sale
+    auth: [flights:book]
+    idempotent: true
+    notes: outcome COMPLETED = HTTP 200 (devuelve booking); ACCEPTED = HTTP 202 (status CHANGE_PENDING).
+    errors: [FARE_NOT_CHANGEABLE, FLIGHT_ALREADY_DEPARTED, SEAT_TAKEN, CHANGE_OFFER_EXPIRED]
+  - graphql: Booking.cancellationQuote
+    rest: GET /bookings/{bookingId}/cancellation-quote
+    module: post-sale
+    auth: [flights:read]
+    notes: La cotización expira (por defecto 15 minutos); usar quoteId en cancelBooking.
+  - graphql: Mutation.cancelBooking
+    rest: POST /bookings/{bookingId}/cancel
+    module: post-sale
+    auth: [flights:cancel]
+    idempotent: true
+    notes: outcome COMPLETED = HTTP 200 (status CANCELLED); ACCEPTED = HTTP 202 (CANCELLATION_PENDING).
+    errors: [ALREADY_CANCELLED, QUOTE_EXPIRED, FLIGHT_ALREADY_DEPARTED]
+  # ---------------- Check-in y Boarding Pass ----------------
+  - graphql: Mutation.checkIn
+    rest: POST /bookings/{bookingId}/check-in
+    module: check-in
+    auth: [flights:book]
+    errors: [CHECK_IN_NOT_AVAILABLE, BOOKING_NOT_CONFIRMED, CHECK_IN_FAILED]
+  - graphql: Booking.boardingPasses
+    rest: GET /bookings/{bookingId}/boarding-passes
+    module: check-in
+    auth: [flights:read]
+    errors: [BOARDING_PASS_NOT_AVAILABLE]
+  # ---------------- Estado de Vuelos ----------------
+  - graphql: Query.flightStatus
+    rest: GET /flights/{flightNumber}/status
+    module: flight-status
+    auth: public
+    errors: [NOT_FOUND, FLIGHT_STATUS_NOT_AVAILABLE]
+  # ---------------- Webhooks ----------------
+  - graphql: Query.webhookSubscriptions
+    rest: GET /webhooks
+    module: webhooks
+    auth: [flights:webhooks]
+  - graphql: Mutation.registerWebhook
+    rest: POST /webhooks
+    module: webhooks
+    auth: [flights:webhooks]
+    errors: [VALIDATION_FAILED]
+  - graphql: Mutation.deleteWebhook
+    rest: DELETE /webhooks/{id}
+    module: webhooks
+    auth: [flights:webhooks]
+    errors: [NOT_FOUND]
+  - graphql: Subscription.bookingEvents
+    rest: callback flightEvent (POST {url} con WebhookPayload)
+    module: webhooks
+    auth: [flights:read]
+    notes: >-
+      Alternativa en tiempo real a los webhooks. Solo emite eventos de reservas cuyo
+      ownerId coincide con el `sub` del token de la conexión.
+
+# =====================================================================================
+# SDL GraphQL
+# =====================================================================================
+schema: |
+  # ---------------------------------------------------------------------------
+  # Directivas
+  # ---------------------------------------------------------------------------
+
+  "La operación no requiere autenticación."
+  directive @public on FIELD_DEFINITION
+
+  "Requiere token OAuth2 válido que contenga TODOS los scopes indicados."
+  directive @auth(scopes: [Scope!]!) on FIELD_DEFINITION
+
+  "La mutation exige el argumento idempotencyKey (UUID) y aplica las reglas de idempotencia."
+  directive @idempotent on FIELD_DEFINITION
+
+  "Restricciones de validación equivalentes a las de OpenAPI."
+  directive @constraint(
+    pattern: String
+    minimum: Int
+    maximum: Int
+    minItems: Int
+    maxItems: Int
+  ) on ARGUMENT_DEFINITION | INPUT_FIELD_DEFINITION
+
+  # ---------------------------------------------------------------------------
+  # Scalars
+  # ---------------------------------------------------------------------------
+
+  "UUID (RFC 4122)."
+  scalar UUID
+  "Fecha ISO-8601 (YYYY-MM-DD)."
+  scalar Date
+  "Fecha y hora ISO-8601 / RFC 3339."
+  scalar DateTime
+  "Código IATA de aeropuerto (^[A-Z]{3}$)."
+  scalar IataCode
+  "Código de moneda ISO-4217 (^[A-Z]{3}$)."
+  scalar CurrencyCode
+  "Monto decimal serializado como String (ej. \"125.40\")."
+  scalar Decimal
+  "URL absoluta."
+  scalar URL
+
+  # ---------------------------------------------------------------------------
+  # Root types
+  # ---------------------------------------------------------------------------
+
+  schema {
+    query: Query
+    mutation: Mutation
+    subscription: Subscription
+  }
+
+  type Query {
+    # ----- Búsqueda y Catálogo -----
+    "Búsqueda de vuelos (multidestino). Requiere header X-Device-Fingerprint."
+    searchFlights(input: SearchFlightsInput!): SearchResult! @public
+
+    "Mapa de asientos por segmento (sin precios)."
+    seatMap(offerId: String!, segmentId: String!): SeatMap! @public
+
+    # ----- Hold -----
+    "Estado de un hold (HELD, RELEASED, EXPIRED, CONSUMED)."
+    hold(holdId: UUID!): Hold! @auth(scopes: [FLIGHTS_READ])
+
+    # ----- Reservas -----
+    "Reservas del usuario autenticado (paginado por cursor)."
+    bookings(
+      filter: BookingFilterInput
+      limit: Int = 10 @constraint(minimum: 1, maximum: 50)
+      cursor: String
+    ): BookingPage! @auth(scopes: [FLIGHTS_READ])
+
+    "Detalle completo de una reserva propia. NOT_FOUND si no existe o no pertenece al usuario."
+    booking(bookingId: UUID!): Booking! @auth(scopes: [FLIGHTS_READ])
+
+    # ----- Postventa -----
+    "Busca disponibilidad para cambio de fecha."
+    dateChangeOptions(bookingId: UUID!, input: DateChangeSearchInput!): [DateChangeOption!]!
+      @auth(scopes: [FLIGHTS_READ])
+
+    # ----- Estado de vuelos -----
+    "Estado operativo de un vuelo en una fecha."
+    flightStatus(flightNumber: String!, date: Date!): FlightStatus! @public
+
+    # ----- Webhooks -----
+    "Suscripciones de webhooks activas."
+    webhookSubscriptions: [WebhookSubscription!]! @auth(scopes: [FLIGHTS_WEBHOOKS])
+  }
+
+  type Mutation {
+    # ----- Hold -----
+    "Bloquea inventario y congela el precio."
+    holdInventory(idempotencyKey: UUID!, input: HoldInput!): Hold!
+      @auth(scopes: [FLIGHTS_HOLD]) @idempotent
+
+    "Libera un hold anticipadamente."
+    releaseHold(holdId: UUID!): ReleaseHoldPayload! @auth(scopes: [FLIGHTS_HOLD])
+
+    # ----- Reservas y emisión -----
+    """
+    Crea la reserva y gestiona la emisión del ticket a partir de un hold.
+    El ownerId se toma del JWT. La emisión puede ser síncrona (COMPLETED) o asíncrona (ACCEPTED).
+    """
+    createBooking(idempotencyKey: UUID!, input: CreateBookingInput!): CreateBookingPayload!
+      @auth(scopes: [FLIGHTS_BOOK]) @idempotent
+
+    # ----- Postventa -----
+    "Agrega maleta extra post-emisión."
+    addBaggage(idempotencyKey: UUID!, bookingId: UUID!, input: AddBaggageInput!): AddBaggagePayload!
+      @auth(scopes: [FLIGHTS_BOOK]) @idempotent
+
+    "Confirma un cambio de fecha previamente cotizado (changeOfferId)."
+    confirmDateChange(idempotencyKey: UUID!, bookingId: UUID!, input: ConfirmDateChangeInput!): ConfirmDateChangePayload!
+      @auth(scopes: [FLIGHTS_BOOK]) @idempotent
+
+    "Cancela la reserva usando un quoteId vigente."
+    cancelBooking(idempotencyKey: UUID!, bookingId: UUID!, input: CancelBookingInput!): CancelBookingPayload!
+      @auth(scopes: [FLIGHTS_CANCEL]) @idempotent
+
+    # ----- Check-in -----
+    "Realiza el check-in de la reserva."
+    checkIn(bookingId: UUID!): CheckInResult! @auth(scopes: [FLIGHTS_BOOK])
+
+    # ----- Webhooks -----
+    "Registra una suscripción de webhook."
+    registerWebhook(input: RegisterWebhookInput!): WebhookSubscription!
+      @auth(scopes: [FLIGHTS_WEBHOOKS])
+
+    "Elimina una suscripción de webhook."
+    deleteWebhook(id: UUID!): DeleteWebhookPayload! @auth(scopes: [FLIGHTS_WEBHOOKS])
+  }
+
+  type Subscription {
+    "Eventos de reservas del usuario autenticado (equivalente en tiempo real a los webhooks)."
+    bookingEvents(events: [WebhookEventType!]): WebhookEvent! @auth(scopes: [FLIGHTS_READ])
+  }
+
+  # ---------------------------------------------------------------------------
+  # Enums
+  # ---------------------------------------------------------------------------
+
+  enum Scope {
+    "flights:read"
+    FLIGHTS_READ
+    "flights:hold"
+    FLIGHTS_HOLD
+    "flights:book"
+    FLIGHTS_BOOK
+    "flights:cancel"
+    FLIGHTS_CANCEL
+    "flights:webhooks"
+    FLIGHTS_WEBHOOKS
+  }
+
+  enum ProblemCode {
+    VALIDATION_FAILED
+    SEAT_TAKEN
+    AMOUNT_MISMATCH
+    BOOKING_NOT_CONFIRMED
+    BAGGAGE_LIMIT_EXCEEDED
+    CUTOFF_PASSED
+    FARE_NOT_CHANGEABLE
+    FLIGHT_ALREADY_DEPARTED
+    CHANGE_OFFER_EXPIRED
+    OFFER_NO_LONGER_AVAILABLE
+    QUOTE_EXPIRED
+    ALREADY_CANCELLED
+    RATE_LIMIT_EXCEEDED
+    INFANT_SEAT_NOT_ALLOWED
+    PAYMENT_REFERENCE_INVALID
+    PAYMENT_NOT_AUTHORIZED
+    PNR_CREATION_FAILED
+    TICKET_ISSUANCE_FAILED
+    TICKET_ALREADY_ISSUED
+    CHECK_IN_NOT_AVAILABLE
+    CHECK_IN_FAILED
+    BOARDING_PASS_NOT_AVAILABLE
+    SEAT_CABIN_MISMATCH
+    FLIGHT_STATUS_NOT_AVAILABLE
+    "Solo GraphQL: token ausente o inválido (401)."
+    UNAUTHENTICATED
+    "Solo GraphQL: scopes insuficientes (403)."
+    FORBIDDEN
+    "Solo GraphQL: recurso inexistente o ajeno (404)."
+    NOT_FOUND
+    "Solo GraphQL: error no controlado (500)."
+    INTERNAL_ERROR
+  }
+
+  "Resultado de una mutation que puede completarse de forma síncrona o asíncrona."
+  enum OperationOutcome {
+    "Completada (equivale a HTTP 200/201)."
+    COMPLETED
+    "Aceptada y en proceso asíncrono (equivale a HTTP 202)."
+    ACCEPTED
+  }
+
+  enum CabinClass {
+    ECONOMY
+    PREMIUM_ECONOMY
+    BUSINESS
+    FIRST
+  }
+
+  enum FlightOperationalStatus {
+    SCHEDULED
+    BOARDING
+    DEPARTED
+    DELAYED
+    ARRIVED
+    CANCELLED
+    DIVERTED
+  }
+
+  enum SeatCharacteristic {
+    WINDOW
+    AISLE
+    EXTRA_LEGROOM
+    EMERGENCY_EXIT
+  }
+
+  enum HoldStatus {
+    HELD
+    RELEASED
+    EXPIRED
+    CONSUMED
+  }
+
+  enum PassengerType {
+    ADULT
+    YOUTH
+    CHILD
+    INFANT
+  }
+
+  enum DocumentType {
+    PASSPORT
+    NATIONAL_ID
+  }
+
+  enum Gender {
+    M
+    F
+    X
+  }
+
+  enum BookingStatus {
+    PENDING
+    PENDING_PAYMENT
+    TICKET_ISSUING
+    CONFIRMED
+    FAILED
+    CHANGE_PENDING
+    CANCELLATION_PENDING
+    CANCELLED
+  }
+
+  enum TicketStatus {
+    PENDING
+    ISSUING
+    ISSUED
+    FAILED
+    VOIDED
+    REFUNDED
+  }
+
+  enum TicketSegmentStatus {
+    PENDING
+    ISSUED
+    FAILED
+  }
+
+  enum CheckInStatus {
+    NOT_ELIGIBLE
+    AVAILABLE
+    IN_PROGRESS
+    COMPLETED
+    FAILED
+  }
+
+  enum PassengerCheckInStatus {
+    CHECKED_IN
+    NOT_CHECKED_IN
+    FAILED
+  }
+
+  enum BarcodeType {
+    AZTEC
+    PDF417
+    QR
+  }
+
+  "Ver enumMappings.WebhookEventType para el valor REST equivalente (booking.confirmed, etc.)."
+  enum WebhookEventType {
+    BOOKING_CONFIRMED
+    BOOKING_FAILED
+    BOOKING_CHANGED
+    BOOKING_CANCELLED
+    BOOKING_BAGGAGE_ADDED
+    HOLD_EXPIRED
+    FLIGHT_SCHEDULE_CHANGED
+    FLIGHT_CANCELLED
+    BOOKING_TICKET_ISSUING
+    BOOKING_TICKET_ISSUED
+    BOOKING_TICKET_FAILED
+    BOOKING_CHECKED_IN
+  }
+
+  # ---------------------------------------------------------------------------
+  # Tipos comunes
+  # ---------------------------------------------------------------------------
+
+  type MoneyAmount {
+    currency: CurrencyCode!
+    baseFare: Decimal
+    taxes: Decimal
+    total: Decimal!
+  }
+
+  type PassengerBreakdown {
+    adults: Int!
+    youths: Int!
+    children: Int!
+    infants: Int!
+  }
+
+  input PassengerBreakdownInput {
+    adults: Int = 1 @constraint(minimum: 1)
+    youths: Int = 0 @constraint(minimum: 0)
+    children: Int = 0 @constraint(minimum: 0)
+    infants: Int = 0 @constraint(minimum: 0)
+  }
+
+  "Referencia a un pago gestionado por la Payment API. Esta API no procesa tarjetas, 3DS, autorización ni captura."
+  input PaymentReferenceInput {
+    "Identificador del pago generado por la Payment API."
+    paymentReference: String!
+  }
+
+  input SeatAssignmentInput {
+    segmentId: String!
+    seatNumber: String!
+  }
+
+  type SeatAssignment {
+    segmentId: String!
+    seatNumber: String!
+  }
+
+  # ---------------------------------------------------------------------------
+  # Búsqueda y Catálogo
+  # ---------------------------------------------------------------------------
+
+  input SearchFlightsInput {
+    itineraries: [SearchItineraryInput!]! @constraint(minItems: 1, maxItems: 6)
+    passengers: PassengerBreakdownInput!
+  }
+
+  input SearchItineraryInput {
+    origin: IataCode!
+    destination: IataCode!
+    departureDate: Date!
+  }
+
+  type SearchResult {
+    totalOffers: Int!
+    offers: [FlightOffer!]!
+  }
+
+  type Airline {
+    code: String
+    name: String
+  }
+
+  type FlightOffer {
+    offerId: String!
+    airline: Airline!
+    itineraries: [ItineraryOption!]!
+    grandTotal: MoneyAmount!
+  }
+
+  type ItineraryOption {
+    itineraryId: String!
+    totalDurationMinutes: Int!
+    stopsCount: Int!
+    segments: [FlightSegment!]!
+    pricingOptions: [CabinPricing!]!
+  }
+
+  type FlightSegment {
+    segmentId: String!
+    flightNumber: String!
+    departure: FlightEndpoint!
+    arrival: FlightEndpoint!
+    layoverMinutes: Int
+    "Código IATA de la aerolínea comercial."
+    marketingCarrier: String!
+    "Código IATA de la aerolínea que opera el vuelo."
+    operatingCarrier: String!
+    "Tipo de aeronave, cuando esté disponible."
+    aircraft: String
+    durationMinutes: Int
+    status: FlightOperationalStatus
+  }
+
+  type FlightEndpoint {
+    iataCode: IataCode!
+    at: DateTime!
+    terminal: String
+  }
+
+  type CabinPricing {
+    cabinClass: CabinClass!
+    fareBrand: String!
+    availableSeats: Int!
+    fareRules: FareRules!
+    baggageAllowance: BaggageAllowance!
+    extraCheckedBaggagePrice: MoneyAmount
+    pricePerPassengerType: [PassengerTypePrice!]!
+  }
+
+  type FareRules {
+    isRefundable: Boolean!
+    isChangeable: Boolean!
+  }
+
+  type BaggageAllowance {
+    personalItemIncluded: Boolean
+    carryOnIncluded: Int
+    checkedBaggageIncluded: Int
+  }
+
+  type PassengerTypePrice {
+    passengerType: PassengerType
+    price: MoneyAmount
+  }
+
+  "Mapa básico de asientos sin precios. Los asientos seleccionables deben corresponder a la cabina adquirida."
+  type SeatMap {
+    segmentId: String!
+    cabins: [SeatMapCabin!]!
+  }
+
+  type SeatMapCabin {
+    cabinClass: CabinClass!
+    rows: [SeatRow!]!
+  }
+
+  type SeatRow {
+    rowNumber: Int!
+    seats: [Seat!]!
+  }
+
+  type Seat {
+    seatNumber: String!
+    isAvailable: Boolean!
+    characteristics: [SeatCharacteristic!]!
+  }
+
+  # ---------------------------------------------------------------------------
+  # Hold
+  # ---------------------------------------------------------------------------
+
+  input HoldInput {
+    offerId: String!
+    itinerarySelections: [ItinerarySelectionInput!]! @constraint(minItems: 1)
+    passengersBreakdown: PassengerBreakdownInput!
+  }
+
+  input ItinerarySelectionInput {
+    itineraryId: String!
+    cabinClass: CabinClass!
+    fareBrand: String!
+  }
+
+  """
+  Unifica HoldResponse (creación) y HoldStatusResponse (consulta) del contrato REST.
+  ttlMinutes se informa al crear; remainingSeconds se calcula en cada consulta.
+  """
+  type Hold {
+    holdId: UUID!
+    status: HoldStatus!
+    expiresAt: DateTime!
+    ttlMinutes: Int
+    remainingSeconds: Int!
+    lockedPrice: MoneyAmount!
+  }
+
+  type ReleaseHoldPayload {
+    holdId: UUID!
+    status: HoldStatus!
+  }
+
+  # ---------------------------------------------------------------------------
+  # Reservas y Emisión
+  # ---------------------------------------------------------------------------
+
+  input CreateBookingInput {
+    holdId: UUID!
+    passengers: [PassengerInput!]! @constraint(minItems: 1)
+    payment: PaymentReferenceInput!
+  }
+
+  input PassengerInput {
+    passengerId: String!
+    passengerType: PassengerType!
+    "Obligatorio cuando passengerType = INFANT."
+    associatedAdultId: String
+    firstName: String!
+    lastName: String!
+    documentType: DocumentType!
+    documentNumber: String!
+    nationality: String!
+    documentExpiryDate: Date
+    birthDate: Date!
+    gender: Gender!
+    contact: ContactInput!
+    "Un INFANT no puede tener asientos asignados (INFANT_SEAT_NOT_ALLOWED)."
+    assignedSeats: [SeatAssignmentInput!]
+    extraBaggage: [ExtraBaggageInput!]
+  }
+
+  input ContactInput {
+    email: String!
+    phone: String!
+  }
+
+  input ExtraBaggageInput {
+    itineraryId: String!
+    quantity: Int! @constraint(minimum: 1)
+  }
+
+  type Passenger {
+    passengerId: String!
+    passengerType: PassengerType!
+    associatedAdultId: String
+    firstName: String!
+    lastName: String!
+    documentType: DocumentType!
+    documentNumber: String!
+    nationality: String!
+    documentExpiryDate: Date
+    birthDate: Date!
+    gender: Gender!
+    contact: Contact!
+    assignedSeats: [SeatAssignment!]!
+    extraBaggage: [ExtraBaggage!]!
+  }
+
+  type Contact {
+    email: String!
+    phone: String!
+  }
+
+  type ExtraBaggage {
+    itineraryId: String!
+    quantity: Int!
+  }
+
+  input BookingFilterInput {
+    pnr: String
+    status: BookingStatus
+    createdFrom: Date
+    createdTo: Date
+  }
+
+  type BookingPage {
+    "Cursor para la siguiente página; null cuando no hay más resultados."
+    nextCursor: String
+    items: [BookingSummary!]!
+  }
+
+  type BookingSummary {
+    bookingId: UUID!
+    pnr: String!
+    status: BookingStatus!
+    origin: IataCode
+    destination: IataCode
+    departureDate: Date
+    grandTotal: MoneyAmount!
+    "Navegación al detalle completo (misma validación de propiedad)."
+    booking: Booking!
+  }
+
+  "Detalle completo de la reserva. Nunca expone el ownerId."
+  type Booking {
+    bookingId: UUID!
+    pnr: String!
+    status: BookingStatus!
+    grandTotal: MoneyAmount!
+    createdAt: DateTime!
+    updatedAt: DateTime
+    itineraries: [ItineraryOption!]!
+    passengers: [Passenger!]!
+    changes: [BookingChange!]!
+
+    # ----- Campos resueltos por otros módulos (equivalen a sub-recursos REST) -----
+    "GET /bookings/{bookingId}/tickets"
+    tickets: [Ticket!]! @auth(scopes: [FLIGHTS_READ])
+    "GET /bookings/{bookingId}/tickets/{ticketId} (NOT_FOUND si no existe)"
+    ticket(ticketId: String!): Ticket! @auth(scopes: [FLIGHTS_READ])
+    "GET /bookings/{bookingId}/baggage-options"
+    baggageOptions: [BaggageOption!]! @auth(scopes: [FLIGHTS_READ])
+    "GET /bookings/{bookingId}/cancellation-quote (genera una cotización nueva en cada resolución)"
+    cancellationQuote: CancellationQuote! @auth(scopes: [FLIGHTS_READ])
+    "GET /bookings/{bookingId}/boarding-passes"
+    boardingPasses: [BoardingPass!]! @auth(scopes: [FLIGHTS_READ])
+  }
+
+  type BookingChange {
+    changedAt: DateTime!
+    description: String
+  }
+
+  type CreateBookingPayload {
+    "COMPLETED = reserva creada y ticket emitido (201); ACCEPTED = pago/emisión asíncrona (202)."
+    outcome: OperationOutcome!
+    booking: Booking!
+  }
+
+  type Ticket {
+    ticketId: String!
+    bookingId: UUID!
+    passengerId: String!
+    eTicketNumber: String
+    status: TicketStatus!
+    issuedAt: DateTime
+    segments: [TicketSegment!]!
+    failureReason: String
+  }
+
+  type TicketSegment {
+    segmentId: String!
+    status: TicketSegmentStatus!
+    couponNumber: String
+  }
+
+  # ---------------------------------------------------------------------------
+  # Postventa: maletas
+  # ---------------------------------------------------------------------------
+
+  type BaggageOption {
+    passengerId: String!
+    itineraryId: String!
+    price: MoneyAmount!
+    maxAllowed: Int!
+    alreadyPurchased: Int!
+  }
+
+  input AddBaggageInput {
+    passengerId: String!
+    itineraryId: String!
+    quantity: Int! @constraint(minimum: 1)
+    payment: PaymentReferenceInput!
+  }
+
+  type BaggageAdded {
+    passengerId: String!
+    itineraryId: String!
+    totalBaggage: Int!
+  }
+
+  type AddBaggagePayload {
+    "COMPLETED = maleta agregada (200); ACCEPTED = procesando con el GDS (202)."
+    outcome: OperationOutcome!
+    "Presente cuando outcome = COMPLETED."
+    baggage: BaggageAdded
+  }
+
+  # ---------------------------------------------------------------------------
+  # Postventa: cambio de fecha
+  # ---------------------------------------------------------------------------
+
+  input DateChangeSearchInput {
+    changes: [DateChangeItemInput!]! @constraint(minItems: 1)
+  }
+
+  input DateChangeItemInput {
+    itineraryId: String!
+    newDepartureDate: Date!
+  }
+
+  type DateChangeOption {
+    changeOfferId: String!
+    expiresAt: DateTime!
+    segments: [FlightSegment!]!
+    priceDifference: PriceDifference!
+  }
+
+  type PriceDifference {
+    fareDifference: Decimal!
+    taxDifference: Decimal!
+    changeFee: Decimal!
+    totalToPay: Decimal!
+  }
+
+  input ConfirmDateChangeInput {
+    changeOfferId: String!
+    "Requerido cuando priceDifference.totalToPay > 0."
+    payment: PaymentReferenceInput
+    assignedSeats: [SeatAssignmentInput!]
+  }
+
+  type ConfirmDateChangePayload {
+    "COMPLETED = cambio confirmado (200); ACCEPTED = CHANGE_PENDING (202)."
+    outcome: OperationOutcome!
+    booking: Booking!
+  }
+
+  # ---------------------------------------------------------------------------
+  # Postventa: cancelación
+  # ---------------------------------------------------------------------------
+
+  type CancellationQuote {
+    quoteId: String!
+    isRefundable: Boolean!
+    refundAmount: Decimal!
+    penaltyAmount: Decimal!
+    currency: CurrencyCode!
+    expiresAt: DateTime!
+  }
+
+  input CancelBookingInput {
+    quoteId: String!
+    reason: String
+  }
+
+  type CancelBookingPayload {
+    "COMPLETED = cancelada (200); ACCEPTED = CANCELLATION_PENDING (202)."
+    outcome: OperationOutcome!
+    bookingId: UUID!
+    status: BookingStatus!
+  }
+
+  # ---------------------------------------------------------------------------
+  # Check-in y Boarding Pass
+  # ---------------------------------------------------------------------------
+
+  type CheckInResult {
+    bookingId: UUID!
+    status: CheckInStatus!
+    checkedInPassengers: [PassengerCheckIn!]!
+  }
+
+  type PassengerCheckIn {
+    passengerId: String!
+    status: PassengerCheckInStatus!
+    segments: [SegmentCheckIn!]!
+  }
+
+  type SegmentCheckIn {
+    segmentId: String!
+    seat: String
+    status: PassengerCheckInStatus!
+  }
+
+  type BoardingPass {
+    passengerId: String!
+    segmentId: String!
+    seat: String!
+    boardingGroup: String
+    boardingPosition: String
+    barcode: String!
+    barcodeType: BarcodeType!
+  }
+
+  # ---------------------------------------------------------------------------
+  # Estado de vuelos
+  # ---------------------------------------------------------------------------
+
+  type FlightStatus {
+    flightNumber: String!
+    date: Date!
+    marketingCarrier: String!
+    operatingCarrier: String!
+    departure: FlightStatusEndpoint!
+    arrival: FlightStatusEndpoint!
+    aircraft: String
+    status: FlightOperationalStatus!
+  }
+
+  type FlightStatusEndpoint {
+    iataCode: IataCode!
+    terminal: String
+    scheduledAt: DateTime!
+    estimatedAt: DateTime
+    actualAt: DateTime
+  }
+
+  # ---------------------------------------------------------------------------
+  # Webhooks
+  # ---------------------------------------------------------------------------
+
+  input RegisterWebhookInput {
+    url: URL!
+    events: [WebhookEventType!]! @constraint(minItems: 1)
+    "Secreto usado para firmar los payloads enviados al webhook."
+    secret: String!
+  }
+
+  type WebhookSubscription {
+    id: UUID!
+    url: URL!
+    events: [WebhookEventType!]!
+    "Se mantiene por paridad con el contrato REST; se recomienda enmascararlo en la implementación."
+    secret: String!
+  }
+
+  type DeleteWebhookPayload {
+    id: UUID!
+    deleted: Boolean!
+  }
+
+  "Equivalente al WebhookPayload REST; usado por Subscription.bookingEvents."
+  type WebhookEvent {
+    eventId: String!
+    eventType: WebhookEventType!
+    occurredAt: DateTime!
+    apiVersion: String!
+    data: WebhookEventData!
+  }
+
+  type WebhookEventData {
+    bookingId: UUID
+    pnr: String
+    status: BookingStatus
+    refundAmount: Decimal
+  }
