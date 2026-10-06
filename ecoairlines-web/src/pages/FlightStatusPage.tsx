@@ -37,7 +37,7 @@ export function FlightStatusPage() {
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const normalized = flightNumber.trim().toUpperCase();
-    if (!FLIGHT_NUMBER.test(normalized)) return setFormError('Ingresa un número de vuelo válido, por ejemplo EA300.');
+    if (!FLIGHT_NUMBER.test(normalized)) return setFormError('Ingresa un número de vuelo válido, por ejemplo EA104.');
     setFormError(undefined);
     setParams({ vuelo: normalized, fecha: date });
   };
@@ -48,7 +48,7 @@ export function FlightStatusPage() {
       <form className="search-row" onSubmit={submit}>
         <label className="field">
           Número de vuelo
-          <input value={flightNumber} maxLength={8} placeholder="EA300" onChange={(event) => setFlightNumber(event.target.value)} required />
+          <input value={flightNumber} maxLength={8} placeholder="EA104" onChange={(event) => setFlightNumber(event.target.value)} required />
         </label>
         <label className="field">
           Fecha

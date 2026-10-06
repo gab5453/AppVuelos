@@ -44,6 +44,11 @@ Con la API levantada, abrir **http://localhost:3000/docs**. El documento crudo e
     (su authorization server no existe en local). Ver la sección siguiente para generarlo.
 - En el selector de la parte superior aparece un segundo documento, **"Extensiones EcoAirlines"** (`/docs/extensions.json`), con los
   endpoints propios. Ver la sección siguiente.
+- Fuera de producción aparece un tercero, **"dev-auth: login y registro"** (`/docs/dev-auth.json`, desde `../dev-auth/openapi.yaml`):
+  - "Try it out" llama directamente a dev-auth (otro servicio), así se puede registrar un cliente o iniciar sesión (`200` y el token)
+    sin salir de Swagger;
+  - la API no gana rutas ni lógica de autenticación;
+  - el CORS de dev-auth y la CSP de `/docs` admiten esa llamada.
 
 ## Extensiones fuera del contrato (V1.D)
 
@@ -58,6 +63,12 @@ El contrato no cambia. Al publicarlo, el anexo se combina en memoria con los sch
 | `GET /admin/dashboard-stats` | `ecoairlines:admin` | Indicadores, rutas, ocupación de los vuelos de hoy y reservas recientes |
 | `PUT /admin/flights/{flightNumber}/status?date=` | `ecoairlines:admin` | Estado operativo; `GET /flights/{n}/status` del contrato lo devuelve |
 | `GET /admin/flights/{flightNumber}/passengers?date=` | `ecoairlines:admin` | Pasajeros confirmados del vuelo, con su asiento |
+| `GET /admin/flights?date=&origin=&destination=` | `ecoairlines:admin` | Ocupación de los vuelos por fecha (hoy por defecto), aeropuerto de origen o ruta: asientos de clientes (holds + reservas), simulados y libres |
+| `GET /admin/fleet-schedule?date=` | `ecoairlines:admin` | Horario de la flota: qué vuelos opera cada avión ese día (hasta 91 días adelante) |
+| `GET/POST /admin/routes`, `GET/PUT/DELETE /admin/routes/{routeId}` | `ecoairlines:admin` | **CRUD de rutas programadas** (línea de ida y vuelta con días y tipo de avión). Cada cambio se publica en el GDS al instante; con pasajeros responde `409` |
+| `GET /admin/aircraft-types` | `ecoairlines:admin` | Tipos de avión (solo consulta): asientos por cabina, alcance, tiempo en tierra, cuántos hay |
+| `GET/POST /admin/aircraft`, `GET/PUT/DELETE /admin/aircraft/{registration}` | `ecoairlines:admin` | **CRUD de la flota**: registrar (tipo y base, matrícula automática), cambiar base y retirar (solo si no opera rutas: `409`) |
+| `GET /admin/events` | `ecoairlines:admin` | Últimos eventos de dominio (`booking.*`, `flight.*`) y el resultado de su entrega por webhook (ver `../EVENTOS.md`) |
 | `GET /admin/observability` | `ecoairlines:admin` | Métricas HTTP en memoria: peticiones por patrón de ruta y status, latencias (media, p95, máx.), errores recientes con `X-Request-Id`, memoria y tiempo encendida. Nunca guarda headers, bodies, tokens ni query strings |
 
 Sin token responden `401`; con un token sin el scope, `403`. `npm run token` incluye los scopes propios; `dev-auth` los emite según el rol
@@ -83,7 +94,7 @@ Separar los scopes con comas, sin espacios (en Windows, `npm` altera los valores
 El token se pega en Swagger → Authorize → `DevBearer`, o se envía como `Authorization: Bearer <token>`.
 
 **Para el frontend** los tokens los emite `../dev-auth` (servidor de autenticación de desarrollo, separado de esta API; HALL-03):
-`POST http://localhost:4000/login` con `demo@ecoairlines.test` / `EcoDemo2026`. Comparte con esta API la configuración por defecto
+`POST http://localhost:4000/login` con clientes `demo@ecoairlines.test` / `EcoDemo2026`, `maria@ecoairlines.test` / `EcoMaria2026` y `luis@ecoairlines.test` / `EcoLuis2026`. Comparte con esta API la configuración por defecto
 (`AUTH_JWT_SECRET`, `AUTH_ISSUER`, `AUTH_AUDIENCE`); si se cambian aquí, hay que cambiarlas también allí. Ver `../ecoairlines-web/README.md`.
 
 | Variable | Default (fuera de producción) | Producción |
@@ -131,12 +142,38 @@ Los gateways de EcoAirlines.DataManagement comparten un GDS en memoria (`../EcoA
 de vuelo ven los mismos vuelos, cupos y asientos. Todo se reinicia al reiniciar la API.
 
 - **Aerolínea ficticia:** EcoAirlines (`EA`). Aeropuertos: `UIO`, `GYE`, `CUE`, `BOG`, `MDE`, `LIM`, `SCL`, `MIA`, `MEX`, `MAD`.
-- **Vuelos diarios** (ver `../EcoAirlines.DataAccess/src/seed/network.ts`); por ejemplo `UIO→BOG` (EA300 07:00, EA302 15:30), `UIO→MAD` (EA502), `BOG→MIA` (EA400).
-  Si no hay vuelo directo, se arman conexiones con una escala de 1 a 10 h, siempre que no den un rodeo mayor a 1,6 veces
-  la distancia directa. No se venden vuelos que salen en menos de 60 min.
+- **Horario generado automáticamente** (`../EcoAirlines.DataAccess/src/seed/timetable.ts`):
+  - Rutas directas **todos con todos** (90 rutas), con **2 vuelos diarios** por ruta y sentido: uno en la franja de mañana
+    (06:00–11:45) y otro en la de tarde/noche (13:00–21:30), en hora local del origen, con horas variadas y sin repetir hora en un
+    mismo aeropuerto. Son 180 vuelos por día.
+  - Ejemplos: `UIO→BOG` EA104 07:30 y EA105 14:30; `UIO→LIM` EA108 09:00 y EA109 16:00; `UIO→MEX` EA114 11:00.
+  - Cada vuelo declara los días de la semana que opera; cada día repite el horario de su día de la semana.
+  - Avión según la distancia: A220-300 (< 1 500 km), A320neo (< 4 500 km) o 787-9.
+- **Ventana de venta de 91 días (13 semanas):** se puede reservar desde hoy hasta hoy + 90. Cada día que pasa entra un día nuevo
+  al final, con el horario de su día de la semana. No se venden vuelos que salen en menos de 60 min.
+- **Asientos:** los vuelos empiezan **vacíos**. Solo los que salen en los 7 días siguientes al arranque de la API tienen una ocupación
+  simulada moderada (20–49 %), para ver funcionar el mapa de asientos.
+- **Horario semanal fijo por avión** (`../EcoAirlines.DataAccess/src/seed/timetable.ts`):
+  - Cada avión tiene una base y un horario semanal: el mismo día de la semana hace siempre los mismos vuelos, durante las 13 semanas.
+  - Cada vuelo de ida tiene su vuelta con el mismo avión; al cerrar la semana, cada avión está otra vez en su base.
+  - Nunca hay un avión en dos lugares a la vez: sale de donde aterrizó, después de su tiempo en tierra (35–90 min según el tipo).
+  - Hoy son 149 aviones (26 A220, 56 A320neo y 67 787-9).
+  - El administrador lo ve en la página de observabilidad (`GET /admin/fleet-schedule`).
+  - **Agregar una ruta a mano:** se da el origen, el destino, el día de la semana, la hora y el avión. `build()` rechaza el horario
+    si un avión queda en dos lugares a la vez o no vuelve a su base:
+
+    ```ts
+    const builder = new TimetableBuilder();
+    const plane = builder.addAircraft('Airbus A220-300', 'UIO'); // HC-J01
+    builder
+      .addFlight({ flightNumber: 'EA900', origin: 'UIO', destination: 'CUE', weekday: 1, departureLocal: '07:00', registration: plane })
+      .addFlight({ flightNumber: 'EA901', origin: 'CUE', destination: 'UIO', weekday: 1, departureLocal: '12:00', registration: plane });
+    const timetable = builder.build();
+    ```
+- También se ofrecen conexiones con una escala de 1 a 10 h, siempre que no den un rodeo mayor a 1,6 veces la distancia directa.
 - **Familias tarifarias:** `SEMILLA` (económica, sin cambios ni reembolso), `BROTE` (1 maleta, cambios con cargo de 50 USD),
   `BOSQUE` (2 maletas, cambios gratis, reembolsable) y `DOSEL` (business).
-- **Identificadores legibles:** segmento `EA300-20261201`, itinerario = segmentos unidos por `.`, oferta = itinerarios unidos por `~`.
+- **Identificadores legibles:** segmento `EA104-20261201`, itinerario = segmentos unidos por `.`, oferta = itinerarios unidos por `~`.
 - **Payment API simulada** (`paymentReference`):
 
   | Referencia | Resultado |
@@ -152,6 +189,8 @@ de vuelo ven los mismos vuelos, cupos y asientos. Todo se reinicia al reiniciar 
 | Variable | Default | Efecto |
 |----------|---------|--------|
 | `ASYNC_PROCESSING_DELAY_MS` | `3000` | Demora de los procesos asíncronos simulados (pagos `async`) |
+| `DEV_AUTH_URL` | `http://localhost:4000` | URL de dev-auth para su documento en Swagger y la CSP de `/docs` (solo fuera de producción) |
+| `WEBHOOK_DELIVERY` | `http` (`log` con `NODE_ENV=test`) | `http` entrega los eventos a las URLs suscritas (POST firmado con HMAC); `log` solo los registra |
 | `CHECK_IN_WINDOW_HOURS` | `48` | Apertura del check-in antes de la salida (cierra 60 min antes) |
 
 ## Errores, trazabilidad y logs
@@ -198,3 +237,6 @@ Qué cubren las e2e (`test/`):
 | `security.e2e-spec.ts` | Cabeceras, CORS, `429`, límites de body, saneamiento, `additionalProperties: false` |
 | `observability.e2e-spec.ts` | `X-Request-Id` y `404` en formato ProblemDetails |
 | `audit-fixes.e2e-spec.ts` | Regresión de los hallazgos de la auditoría (AUD-002…013) |
+| `admin-routes.e2e-spec.ts` | CRUD de rutas programadas: la búsqueda, la flota y el estado de vuelo ven el horario nuevo; validaciones y bloqueo con pasajeros |
+| `admin-fleet.e2e-spec.ts` | CRUD de la flota y rutas con aviones elegidos: tipo, base, alcance, superposición, aviones insuficientes y bloqueo de aviones en servicio |
+| `events.e2e-spec.ts` | Eventos y webhooks: firma HMAC, entrega solo al dueño, `flight.*` a todos, reintentos y `/admin/events` |

@@ -19,7 +19,7 @@ cd dev-auth && npm start
 cd ecoairlines-web && npm install && npm run dev
 ```
 
-Abrir **http://localhost:5173**. Usuario de prueba: `demo@ecoairlines.test` / `EcoDemo2026` (o crear una cuenta).
+Abrir **http://localhost:5173**. Usuarios de prueba: clientes `demo@ecoairlines.test` / `EcoDemo2026`, `maria@ecoairlines.test` / `EcoMaria2026` y `luis@ecoairlines.test` / `EcoLuis2026` (o crear una cuenta); administrador `admin@ecoairlines.test` / `EcoAdmin2026`.
 
 Si la API corre en otro puerto, copiar `.env.example` a `.env` y ajustar `VITE_API_URL`. La API solo acepta
 el origen del frontend que figure en su `CORS_ORIGINS` (por defecto `http://localhost:5173`).

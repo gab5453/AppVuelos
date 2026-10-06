@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AdminDataContext } from './context/admin.context.js';
 import { BookingsDataContext } from './context/bookings.context.js';
 import { CheckInDataContext } from './context/check-in.context.js';
 import { CustomersDataContext } from './context/customers.context.js';
@@ -19,6 +20,7 @@ const DATA_CONTEXTS = [
   CustomersDataContext,
   FlightStatusDataContext,
   IdempotencyDataContext,
+  AdminDataContext,
 ];
 
 /**

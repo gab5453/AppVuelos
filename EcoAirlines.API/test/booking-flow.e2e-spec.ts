@@ -178,6 +178,43 @@ describe('Flujo de compra (Fase 5) (e2e)', () => {
       expect(response.body.tickets).toHaveLength(2);
     });
 
+    it('identidad: documento repetido, cédula inválida y edad que no corresponde al tipo → 422 VALIDATION_FAILED', async () => {
+      const { holdId } = await createHold(app, 'user-a', { passengers: { adults: 2 } });
+      const twin = passenger('a2', 'ADULT', { documentNumber: 'P1234567' });
+      const duplicated = await book('user-a', holdId, [passenger('a1', 'ADULT', { documentNumber: 'P1234567' }), twin]);
+      expect(duplicated.body).toMatchObject({ status: 422, code: 'VALIDATION_FAILED', invalidParams: [{ name: 'passengers[1].documentNumber' }] });
+
+      const badId = await book('user-a', holdId, [passenger('a1', 'ADULT', { documentType: 'NATIONAL_ID', documentNumber: '1710034066' }), passenger('a2')]);
+      expect(badId.body).toMatchObject({ status: 422, invalidParams: [{ name: 'passengers[0].documentNumber' }] });
+
+      const baby = await book('user-a', holdId, [passenger('a1'), passenger('a2', 'ADULT', { birthDate: localDateInDays(-30) })]);
+      expect(baby.body).toMatchObject({ status: 422, invalidParams: [{ name: 'passengers[1].birthDate' }] });
+
+      // Gemelos: mismo nombre, distinto documento (cédula válida) → se acepta.
+      const twins = await book('user-a', holdId, [passenger('a1', 'ADULT', { documentType: 'NATIONAL_ID', documentNumber: '1710034065' }), passenger('a2')]);
+      expect(twins.status).toBe(201);
+    });
+
+    it('una persona no puede tener dos reservas en el mismo vuelo (422); si cancela, sí puede volver a reservar', async () => {
+      const same = { documentType: 'NATIONAL_ID', documentNumber: '1710034065' };
+      const first = await createBooking(app, 'user-a', { passengerList: [passenger('p1', 'ADULT', same)] });
+      const again = await createHold(app, 'user-b');
+      const repeated = await book('user-b', again.holdId, [passenger('p1', 'ADULT', same)]);
+      expect(repeated.body).toMatchObject({ status: 422, code: 'VALIDATION_FAILED', invalidParams: [{ name: 'passengers[0].documentNumber' }] });
+
+      const quote = await request(app.getHttpServer())
+        .get(`/bookings/${first.bookingId}/cancellation-quote`)
+        .set('Authorization', await bearer('user-a', ['flights:read']))
+        .expect(200);
+      await request(app.getHttpServer())
+        .post(`/bookings/${first.bookingId}/cancel`)
+        .set('Authorization', await bearer('user-a', ['flights:cancel']))
+        .set('Idempotency-Key', randomUUID())
+        .send({ quoteId: quote.body.quoteId })
+        .expect(200);
+      expect((await book('user-b', again.holdId, [passenger('p1', 'ADULT', same)])).status).toBe(201);
+    });
+
     it('asientos: valida cabina (422 SEAT_CABIN_MISMATCH) y ocupación (409 SEAT_TAKEN)', async () => {
       const first = await createHold(app, 'user-a');
       const segmentId = first.offer.itineraries[0].segments[0].segmentId;

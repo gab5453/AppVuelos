@@ -381,6 +381,430 @@ registradas en HALLAZGOS (**EXT-01 a EXT-03**), para acordarlas con el líder de
 
 ---
 
+### V1.E — Cambio parte 5: correcciones del frontend, horario de 91 días y horario de la flota — ✅ IMPLEMENTADA (06/10, sin commit)
+
+**Origen:** revisión del supervisor (06/10), con capturas.
+
+**1. Correcciones del frontend (`ecoairlines-web`):**
+- **Selector de pasajeros tapado:** el bloque verde del inicio (`.hero`) tenía `overflow: hidden` y recortaba el desplegable, así que
+  solo se veía "Adultos". Ahora no recorta (el fondo SVG se recorta solo) y queda por encima de la sección siguiente.
+- **Espacio excesivo en el login:** `.field` tiene `flex: 1 1 160px` para las filas del buscador; dentro de un contenedor en columna
+  (login, paneles de la reserva), esos 160 px se volvían altura. Ahí ahora usa `flex: 0 0 auto`.
+- **Fecha por defecto:**
+  - La ida es **hoy** (antes hoy + 7), la vuelta hoy + 7 y el segundo tramo de multidestino hoy + 7.
+  - Si la ida pasa a ser posterior a la vuelta, la vuelta se mueve sola.
+  - Los calendarios no permiten fechas después de los 91 días publicados.
+- **Login del administrador:** entraba al inicio en vez de `/admin`, por una carrera entre la redirección del login y la del rol.
+  Ahora la página redirige según el rol.
+
+**2. Horario generado (`EcoAirlines.DataAccess/src/seed/timetable.ts`), con las pautas del supervisor:**
+- **Rutas:** directas **todos con todos** entre los 10 aeropuertos (90 rutas). Elección del supervisor: todos con todos.
+- **2 vuelos diarios por ruta y sentido:** una ola de mañana (06:00–08:00) y una de noche (19:00–21:00), en hora local del origen.
+  Cada destino sale 15 min después del anterior; por ejemplo, Quito → Lima a las 07:00 y a las 20:00. Son 180 vuelos por día.
+- **Horario por día de la semana:** cada vuelo declara los días que opera. Hoy todos operan los 7 días, pero la estructura admite un
+  horario distinto para cada día, que se repite cada semana.
+- **Ventana de venta de 91 días exactos (13 semanas, múltiplo de 7):**
+  - Se reserva desde hoy hasta hoy + 90.
+  - Cada día que pasa entra uno nuevo con el horario de su día de la semana; por ejemplo, el martes de la semana 13 repite el horario
+    de hoy martes.
+  - Fuera de la ventana, la búsqueda no devuelve vuelos y el hold no se acepta.
+  - Elección del supervisor: 91 días.
+- **Avión según la distancia:** A220-300 (< 1 500 km), A320neo (< 4 500 km) o 787-9.
+- **Números de vuelo:** cambian. `EA` + (100 + 20 × origen + 2 × destino + ola) da EA100–EA297; Quito → Bogotá es EA104 y EA105.
+  La red anterior (EA200–EA503, fija en `network.ts`) se eliminó.
+
+**3. Plan de flota (`EcoAirlines.DataAccess/src/external/gds/fleet-planner.ts`):**
+- **Cómo se calcula:**
+  - En cada aeropuerto y tipo de avión, el avión que queda listo (llegada + tiempo en tierra de 35, 45 o 90 min) toma la siguiente
+    salida, en orden de llegada, sobre una semana que se repite.
+  - Las cadenas resultantes forman ciclos. Un ciclo de `m` semanas necesita `m` aviones, así que **se agregan los aviones que hagan
+    falta**: hoy son 100 (26 A220, 42 A320neo y 32 787-9).
+  - Por construcción, **ningún avión está en dos lugares a la vez**.
+- Un primer intento con simulación semanal no se estabilizaba (los aviones intercambiaban vuelos cada semana); se reemplazó por este
+  método exacto.
+- **Extensión `GET /admin/fleet-schedule?date=`:**
+  - Devuelve cada avión con los vuelos que opera ese día.
+  - Solo para administradores; más allá de los 91 días responde `400`.
+  - Está documentada en el anexo `contract/ecoairlines-extensions.yaml`.
+- **En la página de observabilidad:** nueva sección "Horario de la flota", con calendario, buscador por avión, vuelo o aeropuerto,
+  resumen por tipo de avión y los vuelos de cada avión en orden.
+
+**Verificación (06/10):**
+- Tipos ✅, lint ✅ (backend y frontend), build ✅.
+- Unitarias **143/143** ✅, incluidas las nuevas:
+  - El plan de flota se valida durante **98 días seguidos**: cada vuelo tiene avión del tipo correcto, cada avión sale del aeropuerto
+    donde aterrizó y después de su tiempo en tierra, y todos los aviones vuelan.
+  - Se validan la ventana de 91 días y la repetición por día de la semana.
+- e2e **115/115** ✅, con la conformidad con el contrato y 2 nuevas del horario de la flota.
+- **Navegador (Edge headless, capturas):**
+  - El selector de pasajeros muestra los 4 tipos sin cortarse.
+  - El login quedó sin espacios vacíos.
+  - El buscador propone hoy y hoy + 7, con máximo hoy + 90.
+  - El administrador entra a `/admin` y ve el horario de los 100 aviones.
+- **API real:**
+  - Una búsqueda para hoy devuelve solo los vuelos que aún no salen.
+  - El día 91 tiene vuelos y el 92 no.
+
+**Para revisar:**
+- Con rutas directas todos con todos, las conexiones siguen apareciendo, pero después de los 2 vuelos directos.
+- Rutas largas sin escala (por ejemplo Cuenca → Madrid o Santiago → Madrid) existen solo porque se pidieron todos con todos.
+  Comercialmente se podrían limitar.
+
+### V1.F — Cambio parte 6: asientos vacíos, 3 clientes, horarios variados y filtro por aeropuerto — ✅ IMPLEMENTADA (06/10, sin commit)
+
+**Origen:** pedido del supervisor (06/10). Reemplaza parte de V1.E: las olas fijas de horario y la flota de 100 aviones.
+
+**1. Asientos sin "clientes fantasma":**
+- Antes, cada vuelo nacía con un 35–74 % de asientos ocupados por pasajeros simulados.
+- Ahora **los vuelos empiezan vacíos**. Solo los que salen en los **7 días siguientes al arranque de la API** tienen una ocupación
+  moderada (20–49 %), para observar el mapa de asientos funcionando.
+- El corte se fija al primer uso, así que un vuelo vacío **no se llena solo con el paso de los días**. Eso evitaría que un pasajero
+  simulado "tome" un asiento que ya eligió un cliente real.
+
+**2. Tres clientes de prueba** (en `dev-auth`):
+- `demo@ecoairlines.test` / `EcoDemo2026` (existente).
+- `maria@ecoairlines.test` / `EcoMaria2026` (María Torres).
+- `luis@ecoairlines.test` / `EcoLuis2026` (Luis Andrade).
+- Los tres son CUSTOMER. Se actualizaron el aviso de la página de login y los README.
+
+**3. Horarios más variados** (`timetable.ts`):
+- Las 2 olas fijas (06:00–08:00 y 19:00–21:00) se reemplazan por **2 franjas**: mañana (06:00–11:45) y tarde/noche (13:00–21:30).
+- Cada franja tiene una lista de horas, y cada ruta toma una hora distinta de cada una, rotando según el aeropuerto de origen. Así hay
+  salidas a lo largo de todo el día (11:00, 13:45, 14:30, 15:15, 16:00…) y **ningún aeropuerto repite hora**.
+- Ejemplos desde Quito:
+  - Bogotá: 07:30 y 14:30.
+  - Lima: 09:00 y 16:00.
+  - México: 11:00 y 19:30.
+- **Flota recalculada:** 97 aviones (19 A220, 40 A320neo y 38 787-9). Sigue validada: ningún avión vuela a dos lugares a la vez.
+
+**4. Filtro por aeropuerto en Observabilidad** (sección "Horario de la flota"):
+- Nuevo selector de **aeropuerto** y de qué ver: **llegadas (destino)** por defecto, salidas o ambas.
+- Muestra el resumen del aeropuerto (llegadas, salidas y aviones que pasan) y un **tablero ordenado por hora local**.
+  - En las llegadas indica el origen y la hora de salida; en las salidas, el destino y la hora de llegada.
+  - El tablero también indica el avión de cada vuelo.
+  - La tabla de aviones se limita a los que tocan ese aeropuerto.
+- El horario es **por fecha de salida**: los vuelos largos que salen ese día aparecen como llegadas de la madrugada siguiente, con
+  la fecha indicada.
+
+**Verificación (06/10):**
+- Tipos ✅, lint ✅, build ✅.
+- Unitarias **145/145** ✅ (+2 de ocupación simulada); e2e **115/115** ✅.
+  - La prueba de "asiento ocupado" ahora usa el asiento de otro cliente, no el de un pasajero simulado.
+- **API real:**
+  - Un vuelo de dentro de 2 días tiene 50 de 122 asientos ocupados; uno de dentro de 30 días, 0.
+  - Los 3 clientes inician sesión y sus tokens funcionan en la API.
+- **Navegador:** con el administrador, el filtro Madrid → llegadas muestra sus 18 llegadas del día con origen y avión.
+- **Nota:** en el puerto 4000 quedó corriendo un `dev-auth` anterior (PID 27468, iniciado a las 13:00 del 06/10), que no detuve por
+  no tener certeza de su origen. Hasta reiniciarlo, ese proceso no reconoce a los dos clientes nuevos.
+
+### V1.G — Cambio parte 7: panel admin por fecha, origen o ruta — ✅ IMPLEMENTADA (06/10, sin commit)
+
+**Origen:** pedido del supervisor (06/10). Que el administrador vea cómo se reservan los asientos de los vuelos de cualquier día, por
+punto de origen o por ruta. Por defecto, el día en que abre el panel.
+
+**Backend:**
+- **Nueva extensión `GET /admin/flights?date=&origin=&destination=`** (scope `ecoairlines:admin`):
+  - Devuelve la ocupación de los vuelos de una fecha (por defecto hoy, en Quito).
+  - Con `origin`, solo los que salen de ese aeropuerto; con `origin` y `destination`, los de esa ruta.
+  - Valida los códigos IATA y responde `400` más allá de los 91 días publicados.
+  - Documentada en el anexo OpenAPI.
+- **`FlightOccupancy`** conserva los campos de la plantilla y agrega:
+  - `date`: fecha local del vuelo.
+  - `reservedSeats`: asientos tomados por clientes de EcoAirlines (holds vigentes + reservas).
+  - `simulatedSeats`: pasajeros simulados de la primera semana.
+  - Se cumple `bookedSeats = reservedSeats + simulatedSeats`.
+- `GET /admin/dashboard-stats` reutiliza la misma consulta para "vuelos de hoy".
+
+**Frontend:**
+- La pestaña "Vuelos de hoy" pasa a ser **"Vuelos y asientos"** (`AdminFlightsPanel`), con filtros de **fecha** (hoy por defecto, hasta
+  hoy + 90), **origen**, **destino (ruta)** y número de vuelo, más un botón "Hoy, todos".
+- Resumen de la selección: vuelos, asientos tomados por clientes, simulados, libres y ocupación.
+- En la tabla, las columnas "Clientes" y "Simulados" y los vuelos con clientes resaltados.
+- El cambio de estado y la lista de pasajeros usan la fecha del vuelo elegido, no siempre hoy.
+
+**Incidente durante la implementación:**
+- Al agregar la ruta al anexo, un reemplazo de texto en Node interpretó la secuencia `$'` del patrón `'^[A-Z]{3}$'` como "texto
+  después de la coincidencia" y duplicó partes del YAML.
+- Se reconstruyó desde el último commit y se reaplicaron los cambios de V1.E y V1.G con inserciones literales. El diff final contiene
+  solo lo agregado.
+
+**Verificación (06/10):**
+- Tipos ✅, lint ✅, build ✅.
+- e2e **118/118** ✅ (+3), que comprueban:
+  - por defecto, los 180 vuelos de hoy, con `bookedSeats = reservedSeats + simulatedSeats`;
+  - filtro por origen (18 vuelos) y por ruta (2), y que una reserva a 40 días se refleja en su vuelo;
+  - códigos y fechas inválidos (`400`) y token de cliente (`403`).
+- **Navegador con datos reales:**
+  - El administrador abre el panel en "hoy, todos los vuelos".
+  - Al elegir 26/10 y Quito → Bogotá ve los 2 vuelos; el vuelo reservado aparece resaltado.
+  - "Ver" muestra los pasajeros con su asiento.
+
+### V1.H — Cambio parte 8: horario semanal fijo por avión — ✅ IMPLEMENTADA (06/10, sin commit)
+
+**Origen:** pedido del supervisor (06/10). Los vuelos se repetían cada semana, pero no el avión que los operaba. Ejemplo:
+- HC-W01 operaba EA116 UIO → MAD el martes 6/10 y EA216 LIM → MAD el martes 13/10.
+- Se pidió un estándar: el mismo día de la semana, el mismo avión hace los mismos vuelos durante las 13 semanas. Además, que una ruta
+  nueva se pueda crear con solo origen, destino, día y avión.
+
+**Diseño (`EcoAirlines.DataAccess/src/seed/timetable.ts`, reescrito):**
+- **`TimetableBuilder`**:
+  - `addAircraft(tipo, base)` da de alta un avión y devuelve su matrícula.
+  - `addFlight({ flightNumber, origin, destination, weekday, departureLocal, registration })` agrega un vuelo de un día de la
+    semana con su avión. Rechaza aviones inexistentes, rutas inválidas, números de vuelo con otra ruta u hora y un vuelo con dos aviones el mismo día.
+  - `build()` valida las rotaciones y lanza "Horario inválido" si algo falla.
+- **`validateRotations`** recorre la semana de cada avión como un ciclo: cada vuelo sale de donde aterrizó el anterior, después
+  del tiempo en tierra, y el último de la semana deja al avión listo para el primero de la siguiente.
+- **Generación automática** con el mismo builder: por cada par de ciudades hay dos líneas de ida y vuelta (una con base en cada
+  ciudad). Cada avión hace la ida y su vuelta; en las rutas largas se usan varios aviones que se alternan los días.
+- `fleet-planner.ts` queda como una consulta del horario: la matrícula depende solo del número de vuelo y del día de la semana.
+- Se mantienen 180 vuelos diarios, todos con todos, 2 por ruta, 7 días.
+
+**Contrapartida:** la flota pasa de 97 a **149 aviones** (26 A220, 56 A320neo y 67 787-9). Cada línea tiene aviones dedicados
+que vuelven a su base, en lugar de encadenar vuelos libremente.
+
+**Frontend:** el horario de la flota vuelve a mostrar la base de cada avión y explica el horario semanal fijo.
+
+**Verificación (06/10):**
+- Tipos ✅, lint ✅, build ✅.
+- Unitarias **147/147** ✅, que comprueban:
+  - el mismo avión el mismo día de la semana durante 13 semanas;
+  - ningún avión en dos lugares durante 98 días y que todos los aviones vuelan;
+  - que el builder acepta una ruta nueva válida y rechaza superposiciones o aviones que no vuelven a su base.
+- e2e **118/118** ✅.
+- **API real:** HC-W01 (base UIO) hace EA281 MAD → UIO los martes 6/10, 13/10 y 29/12, y EA116 UIO → MAD los miércoles. HC-J01
+  hace EA100 UIO → GYE 06:00 y EA121 GYE → UIO 14:30 todos los días.
+
+### V1.I — Cambio parte 9: asientos y equipaje del grupo en un solo panel — ✅ IMPLEMENTADA (06/10, sin commit)
+
+**Origen:** pedido del supervisor (06/10), con Avianca como referencia. Con varios pasajeros, elegir asientos y maletas era
+incómodo: cada pasajero tenía su propio mapa y sus propios selectores dentro de su formulario.
+
+**Frontend (solo checkout; no cambia la API ni el contrato):**
+- **`pages/checkout/SeatSelectionPanel.tsx`** — "Selección de asientos":
+  - una pestaña por tramo, con ✓ cuando todos tienen asiento;
+  - la lista de pasajeros a la izquierda (asiento, "Quitar") y el mapa a la derecha;
+  - se elige al pasajero y con un clic queda su asiento; luego pasa solo al siguiente sin asiento;
+  - en el mapa, los asientos del grupo muestran las iniciales del acompañante y al tocarlos se cambia a ese pasajero;
+  - botón "Siguiente tramo".
+- **`pages/checkout/BaggageSelectionPanel.tsx`** — "Equipaje adicional":
+  - una pestaña por vuelo, los pasajeros con lo que suma cada uno y un contador − / + (máximo 3 por vuelo);
+  - lo que incluye la tarifa (artículo personal, mano y bodega, o "no incluido");
+  - "Mismo equipaje para todos los vuelos" y el total de todos los vuelos.
+- `SeatMapPicker` acepta `companions`, `onCompanionClick` y `showSummary` (opcionales). El cambio de asiento de
+  "Mis viajes" sigue igual.
+- `CheckoutPage` quita los extras de cada pasajero. El cuerpo de `POST /bookings` (`assignedSeats`, `extraBaggage`) no cambia.
+
+**Verificación (06/10):**
+- Lint ✅, build ✅.
+- **Navegador con la API real** (3 adultos, UIO ⇄ GYE):
+  - 3 clics en el mapa asignan 4E, 5A y 5D a cada pasajero en orden;
+  - 2 + 1 maletas suman $105; con "Mismo equipaje para todos los vuelos" suman $210, y el total a pagar se actualiza;
+  - la vista móvil (390 px) apila la lista y el detalle sin desbordes.
+
+### V1.J — Cambio parte 10: documento único, edad según el tipo y columna de maletas — ✅ IMPLEMENTADA (06/10, sin commit)
+
+**Origen:** pedido del supervisor (06/10). Al reservar 5 pasajeros LIM → BOG, se aceptaron:
+- la misma cédula 5 veces;
+- adultos nacidos este año.
+
+Además, en "Mis viajes" la columna "Maletas extra" mostraba un número que se confundía con el total de maletas.
+
+**Backend** (`EcoAirlines.Business/src/rules/bookings/passenger-identity-rules.ts` y `BookingsService.create`):
+- **Edad según el tipo**, medida el día del primer vuelo:
+  - adulto 15+, joven 12–14, niño 2–11;
+  - el infante debe seguir teniendo menos de 2 años el día del último vuelo;
+  - la fecha de nacimiento no puede ser posterior al viaje.
+- **Documento:**
+  - de 5 a 20 letras o dígitos (se ignoran espacios, puntos y guiones);
+  - la cédula ecuatoriana (`NATIONAL_ID` + `EC`) se valida con su dígito verificador (módulo 10);
+  - no puede vencer antes del último vuelo.
+- **Documento único:**
+  - no se repite dentro de la reserva (país + número); los nombres sí pueden repetirse (gemelos);
+  - la misma persona tampoco puede estar en otra reserva activa del mismo vuelo; las reservas canceladas o fallidas no cuentan.
+- Todo responde `422 VALIDATION_FAILED` con el campo en `invalidParams`, sin consumir el hold ni verificar el pago. Ver HALLAZGOS EXT-04.
+
+**Frontend:**
+- El checkout aplica las mismas reglas (`lib/passenger-validation.ts`):
+  - el error aparece bajo el campo ("Este documento ya lo tiene el pasajero 1.", "Tendrá 0 años el día del vuelo…");
+  - el calendario de nacimiento limita las fechas al rango de cada tipo, y la etiqueta lo dice ("15 años o más");
+  - no deja pagar mientras haya errores.
+- En el detalle de la reserva, la columna pasa a **"Maletas (Extra)"** con el formato `total (extra)`: las incluidas en la tarifa de cada
+  vuelo más las extra pagadas. Por ejemplo, 2 incluidas + 2 extra = `4 (2)`. El infante muestra "—".
+
+**Pruebas:**
+- El helper de e2e genera un documento único por pasajero y una fecha de nacimiento acorde a su tipo.
+
+**Verificación (06/10):**
+- Tipos ✅, lint ✅ (API y web), build ✅.
+- Unitarias **161/161** ✅, 14 de ellas de las reglas nuevas.
+- e2e **120/120** ✅, 2 nuevas:
+  - documento repetido, cédula inválida y adulto recién nacido responden 422; gemelos con distinto documento, 201;
+  - la misma persona en otra reserva del mismo vuelo responde 422, y tras cancelar la primera ya puede reservar.
+- **Navegador:** 2 adultos con la cédula 1350519375 y uno nacido el 01/01/2026. Aparecen los dos errores bajo los campos y el
+  calendario limita a los adultos hasta el 20/10/2011.
+
+### V1.K — Cambio parte 11: CRUD de rutas, eventos (SOA/EDA) y documentación técnica — ✅ IMPLEMENTADA (06/10, sin commit)
+
+**Origen:** pedido del supervisor (06/10), a partir de `CRITERIOS.md`. Hay que cerrar los criterios 2 (CRUD de administración), 8 (eventos)
+y 9 (documentación: arquitectura y modelo de datos).
+
+**1. CRUD de rutas programadas (criterio 2):**
+- **Horario:**
+  - `timetable.ts` arma el horario a partir de **rutas programadas** (`RouteDefinition`: ida y vuelta, días y tipo de avión);
+  - `generateRoutes()` crea la red base de 90 rutas;
+  - `buildTimetable(routes)` asigna los aviones con `TimetableBuilder` y lanza `TimetableError` si hay conflictos.
+- **GDS:** cada instancia guarda su propio horario (antes era una constante global) y `publishRoutes` lo reemplaza. Así, cada prueba
+  e2e arranca con el horario base.
+- **Datos:**
+  - `AdminDataContext` (futura base `schedule`, tabla `scheduled_routes`) y `ScheduledRouteRepository`;
+  - `FlightOperationsGateway` suma `publishRoutes`, `aircraftByRoute` y `customerSeatsOn`.
+- **`AdminRoutesService`:**
+  - valida aeropuertos, alcance del avión (`422`) y vuelos duplicados (`409`);
+  - rechaza editar o borrar rutas con cupos vendidos o retenidos (`409`);
+  - publica el horario completo en el GDS (`422` si no se puede operar), y solo entonces guarda la ruta.
+  - Los números nuevos van desde EA300.
+- **Endpoints** (extensión, `ecoairlines:admin`): `GET/POST /admin/routes`, `GET/PUT/DELETE /admin/routes/{routeId}`, documentados en el anexo.
+- **Web:** pestaña "Rutas programadas" (`RoutesPanel`):
+  - filtro por aeropuerto y formulario con origen, destino, horas, días y avión (automático o elegido);
+  - las rutas creadas aparecen primero;
+  - "Editar" y "Dar de baja" se deshabilitan si la ruta tiene pasajeros.
+  - La pestaña anterior "Rutas" pasa a llamarse "Ventas por ruta".
+
+**2. Eventos de dominio y webhooks (criterio 8):**
+- **Bus interno** `DomainEventBus` (código compartido de Business):
+  - `publish` / `subscribe`;
+  - los consumidores corren después de responder y un fallo no rompe la operación;
+  - historial de los últimos 100 eventos con sus entregas.
+- **Publicadores (9 eventos del contrato):**
+  - `booking.confirmed`, `booking.ticket_issuing`, `booking.ticket_issued` (al crear la reserva o al confirmar un pago pendiente);
+  - `booking.changed` (cambio de fecha o de asiento), `booking.baggage_added`, `booking.cancelled` (con `refundAmount`), `booking.checked_in`;
+  - `flight.cancelled` y `flight.schedule_changed` (estado de vuelo fijado por el administrador y CRUD de rutas).
+- **Dueño de la reserva:** `BookingsFacade.eventSubject` lo entrega solo para publicar. El snapshot de la reserva sigue sin `ownerId`,
+  como exige su prueba.
+- **`WebhookDeliveryService`:**
+  - escucha el bus;
+  - entrega los `booking.*` solo a las suscripciones del dueño y los `flight.*` a todas;
+  - repite la política anti-SSRF antes de enviar.
+- **`HttpWebhookDispatcherGateway`:**
+  - POST con `X-EcoAirlines-Event`, `X-EcoAirlines-Delivery` y `X-EcoAirlines-Signature` (`t=…,v1=HMAC-SHA256(secret, "t.cuerpo")`);
+  - 3 intentos ante red, `429` o `5xx`;
+  - 5 s por intento, sin seguir redirecciones.
+- **Variable `WEBHOOK_DELIVERY`:** `http` o `log`. Por defecto, `log` en pruebas; se valida al arrancar.
+- **Panel:** `GET /admin/events` (extensión) y la sección "Eventos de dominio y webhooks" en Observabilidad.
+- **Corrección OBS-1:** la URL de un webhook debe ser `http(s)://` en todos los entornos (`400`). Antes, en desarrollo, se aceptaba
+  `no-es-url`.
+
+**3. Documentación (criterio 9):**
+- **`ARQUITECTURA.md`:**
+  - componentes, capas y dominios, secuencia de la compra, rutas programadas, eventos y seguridad;
+  - **modelo de datos** entidad-relación con 9 bases por dominio.
+  - Son 6 diagramas Mermaid.
+- **`EVENTOS.md`:**
+  - catálogo de los 12 eventos (productor, momento, datos, consumidores, estado), formato, firma con código de verificación,
+    reintentos, cómo probarlo y evolución (*outbox*, broker, microservicios);
+  - 2 diagramas.
+- **`AUDITORIA.md`:** se marca como histórica, con una tabla del estado real de cada hallazgo. El HIGH (V1.B) sigue pendiente.
+- **Otros documentos actualizados:** `CRITERIOS.md` (2, 8 y 9 pasan a ✅), `README.md`, `EcoAirlines.API/README.md`, `HALLAZGOS.md`
+  EXT-01 y `PRUEBASSW.md`.
+
+**Verificación (06/10):**
+- Tipos ✅, lint ✅ (API y web), build ✅.
+- Unitarias **168/168** ✅. Las nuevas cubren:
+  - rutas programadas en `fleet-planner.spec.ts`;
+  - el bus de eventos (orden, aislamiento de un consumidor que falla, historial).
+- e2e **130/130** ✅. Las nuevas son:
+  - `admin-routes.e2e-spec.ts`: búsqueda, flota y estado de vuelo ven la ruta nueva; validaciones `400`/`409`/`422`; edición; baja;
+    bloqueo con pasajeros;
+  - `events.e2e-spec.ts`: un suscriptor local verifica la firma HMAC, el filtrado por dueño, `flight.*` a todos, 3 reintentos ante
+    `503`, `/admin/events` y la URL sin esquema.
+- **Los 8 diagramas Mermaid** se dibujaron sin errores con mermaid 11.
+- **Navegador con la pila completa:**
+  - se creó la ruta GYE ⇄ MDE (EA300/EA301, avión HC-J27) y quedó primera en la lista;
+  - un A220 a Madrid muestra el error de alcance;
+  - una reserva, su cancelación y un vuelo cancelado llegaron a un suscriptor externo (4 eventos `DELIVERED`, firma
+    `t=…,v1=…`) y aparecen en Observabilidad.
+
+**Pendiente:**
+- Base de datos real (criterio 5): las rutas y los webhooks siguen en memoria.
+- Despliegue (criterio 1).
+- Eventos `hold.expired`, `booking.failed` y `booking.ticket_failed`: diseñados en `EVENTOS.md`.
+
+### V1.L — Cambio parte 12: dev-auth desde Swagger y CRUD de la flota — ✅ IMPLEMENTADA (06/10, sin commit)
+
+**Origen:** preguntas del supervisor (06/10):
+- dónde se guardan los clientes;
+- por qué no se pueden crear desde Swagger;
+- cómo darse permisos en Swagger;
+- si se deben poder agregar aviones.
+
+Se decidió:
+- **Swagger:** puede llamar a dev-auth sin que la API gane lógica de autenticación.
+- **Flota:** CRUD de aviones.
+- **Tipos de avión:** solo consulta, porque definen el mapa de asientos.
+
+**1. dev-auth en Swagger (solo desarrollo):**
+- `dev-auth/openapi.yaml` documenta `POST /register`, `POST /login` y `GET /health`, con ejemplos: cliente, administrador y contraseña
+  incorrecta.
+- La API lo publica como tercer documento del selector (`/docs/dev-auth.json`), con `servers` = `DEV_AUTH_URL` (por defecto
+  `http://localhost:4000`). En producción no se publica.
+- "Try it out" llama directamente a dev-auth desde el navegador:
+  - el CORS de dev-auth admite por defecto `http://localhost:3000`;
+  - la CSP de `/docs` agrega `connect-src` a dev-auth fuera de producción.
+- **La API no gana rutas ni lógica de autenticación**: el contrato delega el registro y el login a un servidor OAuth2 externo.
+
+**2. CRUD de la flota:**
+- **Horario** (`timetable.ts`):
+  - `buildTimetable(routes, fleet)` recibe la flota registrada;
+  - una ruta puede indicar `aircraft` (sus aviones, en orden), que deben ser del tipo de la ruta, tener base en el origen y alcanzar
+    para los días (si no, `TimetableError` dice cuántos hacen falta);
+  - con `autoAddAircraft` agrega los que falten;
+  - un avión sin vuelos ya no es error: queda disponible;
+  - las matrículas nuevas no repiten las existentes.
+  - El reparto de días se separó en `planRoundTrips` (cuántos aviones hacen falta) y `assignRoundTrips` (con cuáles).
+  - Se exportan `AIRCRAFT_MAX_ROUTE_KM` y `REGISTRATION_PREFIX`.
+- **Datos:**
+  - `AdminDataContext.aircraft` (futura tabla `aircraft`) y `AircraftRepository`;
+  - las rutas guardan sus aviones (`ScheduledRouteRecord.aircraft`, futura tabla `route_aircraft`);
+  - la red base arranca con sus 149 aviones y las rutas con sus aviones fijos. La reconstrucción da el mismo horario: hay una prueba
+    que lo comprueba.
+- **`SchedulePublisher`:** publica en el GDS rutas y flota en cada cambio (`422` si no se puede operar) y guarda en la flota los aviones
+  que el horario agregó solos.
+- **`AdminFleetService`:**
+  - `GET /admin/aircraft-types` (asientos por cabina, alcance, tiempo en tierra, cuántos hay);
+  - `GET/POST /admin/aircraft`: la matrícula es la siguiente libre del tipo, p. ej. HC-J27;
+  - `GET/PUT/DELETE /admin/aircraft/{registration}`: cambiar base o retirar, solo si no opera rutas (`409`).
+- **Rutas** (`POST/PUT /admin/routes`) aceptan `aircraft` (matrículas):
+  - el tipo se deduce del primer avión si no se indica;
+  - al editar sin elegir, se conservan los aviones que siguen sirviendo y se agregan los que falten.
+- **Web:**
+  - pestaña **"Flota"** (`FleetPanel`): tarjetas por tipo, registro, filtros por base y tipo, "solo disponibles", cambiar base y
+    retirar (deshabilitado si el avión opera rutas);
+  - en "Rutas programadas", el formulario muestra los aviones del tipo con base en el origen y su estado (disponible, N rutas,
+    esta ruta) para elegirlos;
+  - si no se elige ninguno, se asignan solos.
+- **Documentación:** anexo OpenAPI (rutas nuevas, schemas `Aircraft`, `AircraftTypeInfo`, campo `aircraft`), `ARQUITECTURA.md` (tablas
+  AIRCRAFT y ROUTE_AIRCRAFT), `CRITERIOS.md`, `PRUEBASSW.md` (token desde dev-auth en Swagger y casos de flota), `HALLAZGOS.md` EXT-01 y
+  `EcoAirlines.API/README.md`.
+
+**Verificación (06/10):**
+- Tipos ✅, lint ✅ (API y web), build ✅.
+- Unitarias **173/173** ✅. Las 5 nuevas cubren:
+  - la red base reconstruida es idéntica;
+  - avión elegido y avión libre;
+  - avión compartido entre dos rutas (válido si encaja, `TimetableError` si se superpone);
+  - aviones insuficientes, de otra base, de otro tipo o inexistentes;
+  - matrículas sin repetir.
+- e2e **137/137** ✅, con 7 nuevas:
+  - `admin-fleet.e2e-spec.ts` (5): tipos y flota base; alta con HC-N57; ruta con el avión elegido; bloqueos `409`; errores `422`; aviones
+    automáticos;
+  - `swagger.e2e-spec.ts` (2): el documento de dev-auth y la CSP en desarrollo, y su ausencia en producción.
+- Diagramas Mermaid: 8/8 se dibujan.
+- **Navegador:**
+  - desde Swagger, `POST /login` de dev-auth respondió `200` con el token, y con contraseña incorrecta `401`;
+  - en el panel se registró HC-J27 (A220, UIO) y se creó UIO ⇄ CUE eligiéndolo: "Ruta creada… con HC-J27".
+
+---
+
 ## 4. Plan de la versión 1 — ⏳ PENDIENTE DE APROBACIÓN
 
 > Orden propuesto: primero que **se vea y funcione** (V1.0), luego lo que exige RDA1 para la nube (V1.1 a V1.4) y al final las mejoras (V1.5 y V1.6).

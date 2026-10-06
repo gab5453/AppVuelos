@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { DomainEventBus } from '../../common/events/domain-event-bus.js';
 import type { PassengerItem } from '@ecoairlines/data-access/common/contract/common.types.js';
 import { formatCents, toCents } from '@ecoairlines/data-access/common/money.js';
 import {
@@ -7,6 +8,8 @@ import {
 } from '@ecoairlines/data-management/interfaces/admin/flight-operations.gateway.js';
 import type {
   AdminDashboardStatsDto,
+  DomainEventDto,
+  FleetScheduleDto,
   FlightOccupancyDto,
   RouteStatDto,
 } from '../../dto/admin/admin.dto.js';
@@ -31,30 +34,13 @@ export class AdminService {
     private readonly bookings: BookingsFacade,
     private readonly flightStatus: FlightStatusService,
     @Inject(FLIGHT_OPERATIONS_GATEWAY) private readonly operations: FlightOperationsGateway,
+    private readonly events: DomainEventBus,
   ) {}
 
   async getDashboardStats(): Promise<AdminDashboardStatsDto> {
     const bookings = await this.bookings.listAll();
     const confirmed = bookings.filter((booking) => booking.status === 'CONFIRMED');
-    const today = new Date(Date.now() + HOME_UTC_OFFSET_MINUTES * 60_000).toISOString().slice(0, 10);
-    const flightsToday = await this.operations.flightsOn(today);
-
-    const flightOccupancies: FlightOccupancyDto[] = [];
-    for (const flight of flightsToday) {
-      const status = await this.flightStatus.findStatus(flight.flightNumber, flight.date);
-      const bookedSeats = flight.totalSeats - flight.availableSeats;
-      flightOccupancies.push({
-        flightId: flight.flightId,
-        flightNumber: flight.flightNumber,
-        route: `${flight.origin} ✈ ${flight.destination}`,
-        scheduledDeparture: flight.scheduledDeparture,
-        status: status?.status ?? 'SCHEDULED',
-        totalSeats: flight.totalSeats,
-        bookedSeats,
-        availableSeats: flight.availableSeats,
-        occupancyPercentage: flight.totalSeats ? Math.round((bookedSeats / flight.totalSeats) * 1000) / 10 : 0,
-      });
-    }
+    const flightOccupancies = await this.getFlights({});
 
     const routeStats: RouteStatDto[] = (await this.operations.routes())
       .map((route) => {
@@ -77,11 +63,52 @@ export class AdminService {
       cancelledBookings: bookings.filter((booking) => booking.status === 'CANCELLED').length,
       totalPassengers: confirmed.reduce((total, booking) => total + (booking.passengers?.length ?? 0), 0),
       totalRevenue: revenue(confirmed),
-      totalFlightsToday: flightsToday.length,
+      totalFlightsToday: flightOccupancies.length,
       routeStats,
       flightOccupancies,
       recentBookings: bookings.slice(0, RECENT_BOOKINGS).map(toDetail),
     };
+  }
+
+  /**
+   * Ocupación de los vuelos de una fecha (por defecto hoy en Quito), opcionalmente de un aeropuerto de origen o de una ruta.
+   * Sirve para observar cómo se reservan los asientos de cualquier día publicado; más allá de los 91 días responde 400.
+   */
+  async getFlights(query: { date?: string; origin?: string; destination?: string }): Promise<FlightOccupancyDto[]> {
+    const date = query.date ?? homeToday();
+    const lastDate = await this.operations.salesWindowEnd();
+    if (date > lastDate) {
+      throw new ProblemDetailsException({
+        status: 400,
+        code: 'VALIDATION_FAILED',
+        title: `El horario publicado llega hasta el ${lastDate}.`,
+        invalidParams: [{ name: 'date', reason: `must be on or before ${lastDate}` }],
+      });
+    }
+    const flights = (await this.operations.flightsOn(date)).filter(
+      (flight) => (!query.origin || flight.origin === query.origin) && (!query.destination || flight.destination === query.destination),
+    );
+
+    const result: FlightOccupancyDto[] = [];
+    for (const flight of flights) {
+      const status = await this.flightStatus.findStatus(flight.flightNumber, flight.date);
+      const bookedSeats = flight.totalSeats - flight.availableSeats;
+      result.push({
+        flightId: flight.flightId,
+        flightNumber: flight.flightNumber,
+        route: `${flight.origin} ✈ ${flight.destination}`,
+        scheduledDeparture: flight.scheduledDeparture,
+        status: status?.status ?? 'SCHEDULED',
+        totalSeats: flight.totalSeats,
+        bookedSeats,
+        availableSeats: flight.availableSeats,
+        occupancyPercentage: flight.totalSeats ? Math.round((bookedSeats / flight.totalSeats) * 1000) / 10 : 0,
+        date: flight.date,
+        reservedSeats: flight.reservedSeats,
+        simulatedSeats: flight.simulatedSeats,
+      });
+    }
+    return result;
   }
 
   async updateFlightStatus(
@@ -90,7 +117,34 @@ export class AdminService {
     adminId: string,
     date?: string,
   ): Promise<FlightStatusDto> {
-    return this.flightStatus.setOperationalStatus(flightNumber, date ?? (await this.today(flightNumber)), status, adminId);
+    const updated = await this.flightStatus.setOperationalStatus(flightNumber, date ?? (await this.today(flightNumber)), status, adminId);
+    this.events.publish({
+      eventType: status === 'CANCELLED' ? 'flight.cancelled' : 'flight.schedule_changed',
+      data: { flightNumber: updated.flightNumber, date: updated.date, status: updated.status },
+    });
+    return updated;
+  }
+
+  /** Últimos eventos del bus interno con sus entregas (webhooks). No incluye el dueño de cada reserva. */
+  getRecentEvents(): DomainEventDto[] {
+    return this.events.recent().map(({ ownerId: _ownerId, ...event }) => event);
+  }
+
+  /**
+   * Rotación de la flota en una fecha (por defecto, hoy en Quito). Se puede consultar el pasado y el horario publicado
+   * (ventana de venta de 91 días); más adelante todavía no hay vuelos programados.
+   */
+  async getFleetSchedule(date?: string): Promise<FleetScheduleDto> {
+    const schedule = await this.operations.fleetSchedule(date ?? homeToday());
+    if (schedule.date > schedule.salesWindow.to) {
+      throw new ProblemDetailsException({
+        status: 400,
+        code: 'VALIDATION_FAILED',
+        title: `El horario publicado llega hasta el ${schedule.salesWindow.to}.`,
+        invalidParams: [{ name: 'date', reason: `must be on or before ${schedule.salesWindow.to}` }],
+      });
+    }
+    return schedule;
   }
 
   /** Pasajeros de reservas confirmadas que vuelan ese vuelo en esa fecha, con su asiento en ese vuelo. */
@@ -119,6 +173,11 @@ export class AdminService {
     if (!today) throw flightNotFound();
     return today;
   }
+}
+
+/** Hoy en la base de operaciones (Quito, UTC−5). */
+function homeToday(): string {
+  return new Date(Date.now() + HOME_UTC_OFFSET_MINUTES * 60_000).toISOString().slice(0, 10);
 }
 
 /** Origen y destino del primer itinerario de la reserva. */

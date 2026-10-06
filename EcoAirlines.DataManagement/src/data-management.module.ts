@@ -10,6 +10,7 @@ import { GdsOfferInventoryGateway } from './gateways/offers/gds-offer-inventory.
 import { GdsPostSaleGateway } from './gateways/post-sale/gds-post-sale.gateway.js';
 import { MockPostSalePaymentGateway } from './gateways/post-sale/mock-post-sale-payment.gateway.js';
 import { GdsFlightCatalogGateway } from './gateways/search/gds-flight-catalog.gateway.js';
+import { HttpWebhookDispatcherGateway } from './gateways/webhooks/http-webhook-dispatcher.gateway.js';
 import { NoopWebhookDispatcherGateway } from './gateways/webhooks/noop-webhook-dispatcher.gateway.js';
 import { FLIGHT_OPERATIONS_GATEWAY } from './interfaces/admin/flight-operations.gateway.js';
 import { BOOKING_REPOSITORY } from './interfaces/bookings/booking.repository.js';
@@ -18,6 +19,10 @@ import { RESERVATION_SYSTEM_GATEWAY } from './interfaces/bookings/reservation-sy
 import { CHECK_IN_REPOSITORY } from './interfaces/check-in/check-in.repository.js';
 import { DEPARTURE_CONTROL_GATEWAY } from './interfaces/check-in/departure-control.gateway.js';
 import { CUSTOMER_PROFILE_REPOSITORY } from './interfaces/customers/customer-profile.repository.js';
+import { AIRCRAFT_REPOSITORY } from './interfaces/admin/aircraft.repository.js';
+import { InMemoryAircraftRepository } from './repositories/admin/in-memory-aircraft.repository.js';
+import { SCHEDULED_ROUTE_REPOSITORY } from './interfaces/admin/scheduled-route.repository.js';
+import { InMemoryScheduledRouteRepository } from './repositories/admin/in-memory-scheduled-route.repository.js';
 import { FLIGHT_STATUS_OVERRIDE_REPOSITORY } from './interfaces/flight-status/flight-status-override.repository.js';
 import { FLIGHT_STATUS_GATEWAY } from './interfaces/flight-status/flight-status.gateway.js';
 import { IDEMPOTENCY_REPOSITORY } from './interfaces/idempotency/idempotency.repository.js';
@@ -72,13 +77,22 @@ const PROVIDERS = [
   // flight-status — BD futura `flight-status` (ajustes operativos)
   { provide: FLIGHT_STATUS_GATEWAY, useClass: GdsFlightStatusGateway },
   { provide: FLIGHT_STATUS_OVERRIDE_REPOSITORY, useClass: InMemoryFlightStatusOverrideRepository },
+  { provide: SCHEDULED_ROUTE_REPOSITORY, useClass: InMemoryScheduledRouteRepository },
+  { provide: AIRCRAFT_REPOSITORY, useClass: InMemoryAircraftRepository },
   // customers — BD futura `customers` (extensión fuera del contrato)
   { provide: CUSTOMER_PROFILE_REPOSITORY, useClass: InMemoryCustomerProfileRepository },
   // admin — sin datos propios (extensión fuera del contrato)
   { provide: FLIGHT_OPERATIONS_GATEWAY, useClass: GdsFlightOperationsGateway },
   // webhooks — BD futura `webhooks`
   { provide: WEBHOOK_REPOSITORY, useClass: InMemoryWebhookRepository },
-  { provide: WEBHOOK_DISPATCHER_GATEWAY, useClass: NoopWebhookDispatcherGateway },
+  {
+    provide: WEBHOOK_DISPATCHER_GATEWAY,
+    // WEBHOOK_DELIVERY=http envía de verdad; =log solo registra. Por defecto: log en pruebas, http en los demás entornos.
+    useFactory: () =>
+      (process.env.WEBHOOK_DELIVERY ?? (process.env.NODE_ENV === 'test' ? 'log' : 'http')) === 'http'
+        ? new HttpWebhookDispatcherGateway()
+        : new NoopWebhookDispatcherGateway(),
+  },
   // transversal
   { provide: IDEMPOTENCY_REPOSITORY, useClass: InMemoryIdempotencyRepository },
 ];

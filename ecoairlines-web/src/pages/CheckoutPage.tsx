@@ -9,8 +9,10 @@ import { Countdown } from '../components/Countdown';
 import { Field, SelectField } from '../components/FormFields';
 import { ItinerarySummary } from '../components/ItinerarySummary';
 import { ProblemAlert } from '../components/ProblemAlert';
-import { SeatMapPicker } from '../components/SeatMapPicker';
+import { BaggageSelectionPanel } from './checkout/BaggageSelectionPanel';
+import { SeatSelectionPanel, type CheckoutPassenger } from './checkout/SeatSelectionPanel';
 import { PASSENGER_LABELS, formatMoney, todayIso } from '../lib/format';
+import { AGE_RANGES, birthDateBounds, passengerIssues } from '../lib/passenger-validation';
 import { useIdempotencyKey } from '../lib/request-ids';
 
 interface PassengerForm {
@@ -78,7 +80,6 @@ function Checkout({ flow }: { flow: BookingFlow }) {
   const [seats, setSeats] = useState<Record<string, Record<string, string>>>({});
   /** bags[passengerId][itineraryId] = cantidad */
   const [bags, setBags] = useState<Record<string, Record<string, number>>>({});
-  const [openSeatMap, setOpenSeatMap] = useState<string | null>(null);
   const [paymentReference, setPaymentReference] = useState('');
   const [expired, setExpired] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -123,8 +124,25 @@ function Checkout({ flow }: { flow: BookingFlow }) {
   const segments = flow.offer.itineraries.flatMap((itinerary, index) =>
     itinerary.segments.map((segment) => ({ segment, cabinClass: flow.choices[index]!.pricing.cabinClass })),
   );
+  const travel = {
+    firstDeparture: flow.offer.itineraries[0]!.segments[0]!.departure.at.slice(0, 10),
+    lastDeparture: flow.offer.itineraries.at(-1)!.segments.at(-1)!.departure.at.slice(0, 10),
+  };
+  const issues = passengerIssues(passengers, travel);
   const seated = passengers.filter((passenger) => passenger.passengerType !== 'INFANT');
   const adults = passengers.filter((passenger) => passenger.passengerType === 'ADULT');
+  const seatedPeople: CheckoutPassenger[] = seated.map((passenger) => {
+    const position = passengers.indexOf(passenger) + 1;
+    const fallback = `${PASSENGER_LABELS[passenger.passengerType]} ${position}`;
+    const name = `${passenger.firstName.trim()} ${passenger.lastName.trim()}`.trim();
+    const initials = (passenger.firstName.trim()[0] ?? '') + (passenger.lastName.trim()[0] ?? '');
+    return {
+      passengerId: passenger.passengerId,
+      name: name || fallback,
+      initials: initials.toUpperCase() || `P${position}`,
+      typeLabel: PASSENGER_LABELS[passenger.passengerType],
+    };
+  });
 
   const request = useMemo(
     () => ({
@@ -183,7 +201,12 @@ function Checkout({ flow }: { flow: BookingFlow }) {
     event.preventDefault();
     if (!token) return;
     const missing = passengers.find((p) => !p.firstName.trim() || !p.lastName.trim() || !p.documentNumber.trim() || !p.birthDate || !p.email.trim() || !p.phone.trim());
-    if (missing) return setFormError(`Completa los datos de ${PASSENGER_LABELS[missing.passengerType]} ${missing.passengerId}.`);
+    if (missing) return setFormError(`Completa los datos de ${PASSENGER_LABELS[missing.passengerType]} ${passengers.indexOf(missing) + 1}.`);
+    const invalid = Object.entries(issues)[0];
+    if (invalid) {
+      const [position, fields] = invalid;
+      return setFormError(`Revisa al pasajero ${Number(position) + 1}: ${Object.values(fields)[0]}`);
+    }
     if (!/^pay_[A-Za-z0-9_-]{3,64}$/.test(paymentReference.trim())) {
       return setFormError('Ingresa la referencia de pago entregada por la pasarela (formato pay_…).');
     }
@@ -240,10 +263,11 @@ function Checkout({ flow }: { flow: BookingFlow }) {
                 <Field label="Apellidos" value={passenger.lastName} onChange={(lastName) => update(index, { lastName })} autoComplete="family-name" maxLength={60} />
                 <SelectField label="Tipo de documento" value={passenger.documentType} onChange={(documentType) => update(index, { documentType: documentType as PassengerForm['documentType'] })}
                   options={[['PASSPORT', 'Pasaporte'], ['NATIONAL_ID', 'Cédula / DNI']]} />
-                <Field label="Número de documento" value={passenger.documentNumber} onChange={(documentNumber) => update(index, { documentNumber })} maxLength={20} />
+                <Field label="Número de documento" value={passenger.documentNumber} onChange={(documentNumber) => update(index, { documentNumber })} maxLength={20} error={issues[index]?.documentNumber} />
                 <Field label="Nacionalidad (código de país)" value={passenger.nationality} onChange={(nationality) => update(index, { nationality })} maxLength={3} placeholder="EC" />
-                <Field label="Vencimiento del documento (opcional)" type="date" min={todayIso()} value={passenger.documentExpiryDate} onChange={(documentExpiryDate) => update(index, { documentExpiryDate })} required={false} />
-                <Field label="Fecha de nacimiento" type="date" max={todayIso()} value={passenger.birthDate} onChange={(birthDate) => update(index, { birthDate })} autoComplete="bday" />
+                <Field label="Vencimiento del documento (opcional)" type="date" min={todayIso()} value={passenger.documentExpiryDate} onChange={(documentExpiryDate) => update(index, { documentExpiryDate })} required={false} error={issues[index]?.documentExpiryDate} />
+                <Field label={`Fecha de nacimiento (${AGE_RANGES[passenger.passengerType].hint})`} type="date" {...birthDateBounds(passenger.passengerType, travel.firstDeparture, travel.lastDeparture)}
+                  value={passenger.birthDate} onChange={(birthDate) => update(index, { birthDate })} autoComplete="bday" error={issues[index]?.birthDate} />
                 <SelectField label="Género" value={passenger.gender} onChange={(gender) => update(index, { gender: gender as PassengerForm['gender'] })}
                   options={[['F', 'Femenino'], ['M', 'Masculino'], ['X', 'No binario / prefiero no decir']]} />
                 <Field label="Correo" type="email" value={passenger.email} onChange={(email) => update(index, { email })} autoComplete="email" maxLength={120} />
@@ -259,71 +283,46 @@ function Checkout({ flow }: { flow: BookingFlow }) {
                 </button>
               )}
 
-              {passenger.passengerType !== 'INFANT' && (
-                <div className="extras">
-                  <h3>Asientos (opcional)</h3>
-                  {segments.map(({ segment, cabinClass }) => {
-                    const key = `${passenger.passengerId}|${segment.segmentId}`;
-                    const current = seats[passenger.passengerId]?.[segment.segmentId];
-                    return (
-                      <div key={key} className="extra-row">
-                        <span className="small">
-                          {segment.flightNumber} {segment.departure.iataCode}→{segment.arrival.iataCode}: <strong>{current ?? 'sin elegir'}</strong>
-                        </span>
-                        <button type="button" className="btn btn-ghost btn-sm" aria-expanded={openSeatMap === key} onClick={() => setOpenSeatMap(openSeatMap === key ? null : key)}>
-                          {openSeatMap === key ? 'Cerrar mapa' : 'Elegir asiento'}
-                        </button>
-                        {openSeatMap === key && (
-                          <SeatMapPicker
-                            offerId={flow.offer.offerId}
-                            segmentId={segment.segmentId}
-                            cabinClass={cabinClass}
-                            selected={current}
-                            takenByOthers={seated
-                              .filter((other) => other.passengerId !== passenger.passengerId)
-                              .map((other) => seats[other.passengerId]?.[segment.segmentId])
-                              .filter((seat): seat is string => Boolean(seat))}
-                            onSelect={(seat) =>
-                              setSeats((all) => {
-                                const mine = { ...all[passenger.passengerId] };
-                                if (seat) mine[segment.segmentId] = seat;
-                                else delete mine[segment.segmentId];
-                                return { ...all, [passenger.passengerId]: mine };
-                              })
-                            }
-                          />
-                        )}
-                      </div>
-                    );
-                  })}
-
-                  <h3>Maletas extra (opcional)</h3>
-                  {flow.choices.map((choice, position) => (
-                    <div key={choice.itineraryId} className="extra-row">
-                      <label className="inline-field">
-                        Vuelo {position + 1} · {formatMoney(choice.pricing.extraCheckedBaggagePrice)} c/u
-                        <select
-                          value={bags[passenger.passengerId]?.[choice.itineraryId] ?? 0}
-                          onChange={(event) =>
-                            setBags((all) => ({
-                              ...all,
-                              [passenger.passengerId]: { ...all[passenger.passengerId], [choice.itineraryId]: Number(event.target.value) },
-                            }))
-                          }
-                        >
-                          {[0, 1, 2, 3].map((quantity) => (
-                            <option key={quantity} value={quantity}>{quantity}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <span className="muted small">Incluidas en tu tarifa: {choice.pricing.baggageAllowance.checkedBaggageIncluded ?? 0}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
             </fieldset>
           ))}
         </section>
+
+        {seated.length > 0 && (
+          <section className="card" aria-labelledby="asientos-title">
+            <h2 id="asientos-title">Selección de asientos <span className="muted small">(opcional)</span></h2>
+            <SeatSelectionPanel
+              offerId={flow.offer.offerId}
+              segments={segments}
+              passengers={seatedPeople}
+              seats={seats}
+              onChange={(passengerId, segmentId, seat) =>
+                setSeats((all) => {
+                  const mine = { ...all[passengerId] };
+                  if (seat) mine[segmentId] = seat;
+                  else delete mine[segmentId];
+                  return { ...all, [passengerId]: mine };
+                })
+              }
+            />
+          </section>
+        )}
+
+        {seated.length > 0 && (
+          <section className="card" aria-labelledby="equipaje-title">
+            <h2 id="equipaje-title">Equipaje adicional <span className="muted small">(opcional)</span></h2>
+            <BaggageSelectionPanel
+              itineraries={flow.offer.itineraries.map((itinerary, index) => ({ itinerary, pricing: flow.choices[index]!.pricing }))}
+              passengers={seatedPeople}
+              bags={bags}
+              onChange={(passengerId, itineraryIds, quantity) =>
+                setBags((all) => ({
+                  ...all,
+                  [passengerId]: { ...all[passengerId], ...Object.fromEntries(itineraryIds.map((itineraryId) => [itineraryId, quantity])) },
+                }))
+              }
+            />
+          </section>
+        )}
 
         <section className="card" aria-labelledby="pago-title">
           <h2 id="pago-title">Pago</h2>

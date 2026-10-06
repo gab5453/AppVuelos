@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { LeafLogo } from '../components/LeafLogo';
 
@@ -9,9 +9,8 @@ function safeNext(value: string | null): string {
 }
 
 export function LoginPage() {
-  const { token, login, register } = useAuth();
+  const { token, isAdmin, login, register } = useAuth();
   const [params] = useSearchParams();
-  const navigate = useNavigate();
   const next = safeNext(params.get('next'));
   const [mode, setMode] = useState<'LOGIN' | 'REGISTER'>('LOGIN');
   const [name, setName] = useState('');
@@ -20,16 +19,17 @@ export function LoginPage() {
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
 
-  if (token) return <Navigate to={next} replace />;
+  // El administrador entra directo a su panel, salvo que viniera de otra página.
+  if (token) return <Navigate to={isAdmin && next === '/' ? '/admin' : next} replace />;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setError(undefined);
     try {
-      const user = mode === 'LOGIN' ? await login(email.trim(), password) : await register(name.trim(), email.trim(), password);
-      // El administrador entra directo a su panel, salvo que viniera de otra página.
-      navigate(user.role === 'ADMIN' && next === '/' ? '/admin' : next, { replace: true });
+      // Al guardarse la sesión, el <Navigate> de arriba lleva a la página que corresponde según el rol.
+      if (mode === 'LOGIN') await login(email.trim(), password);
+      else await register(name.trim(), email.trim(), password);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'No se pudo iniciar sesión.');
     } finally {
@@ -72,7 +72,7 @@ export function LoginPage() {
           {mode === 'LOGIN' ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Ingresa'}
         </button>
         <p className="muted small">
-          Entorno de prueba: cliente <code>demo@ecoairlines.test</code> / <code>EcoDemo2026</code>; administrador <code>admin@ecoairlines.test</code> / <code>EcoAdmin2026</code>. Tu sesión dura 1 hora y se cierra al recargar la página.
+          Entorno de prueba: clientes <code>demo@ecoairlines.test</code> / <code>EcoDemo2026</code>, <code>maria@ecoairlines.test</code> / <code>EcoMaria2026</code> y <code>luis@ecoairlines.test</code> / <code>EcoLuis2026</code>; administrador <code>admin@ecoairlines.test</code> / <code>EcoAdmin2026</code>. Tu sesión dura 1 hora y se cierra al recargar la página.
         </p>
       </form>
     </div>

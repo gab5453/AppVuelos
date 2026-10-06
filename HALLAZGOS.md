@@ -35,7 +35,7 @@
 | OPS-04 | 🟠 | `127.0.0.1:5173` no abre; solo `localhost` | No | |
 | OPS-05 | 🟠 | Si el 5173 está ocupado, Vite cambia de puerto y CORS bloquea | No | |
 | OPS-06 | 🟡 | Node 24.12 < 24.15 que piden algunas dependencias | No | |
-| EXT-01 | 🟠 | Endpoints propios fuera del contrato (perfil, cambio de asiento, administración, observabilidad) | **Sí**: acordar con el líder de booking | |
+| EXT-01 | 🟠 | Endpoints propios fuera del contrato (perfil, cambio de asiento, administración, rutas programadas, eventos, observabilidad) y firma de webhooks | **Sí**: acordar con el líder de booking | |
 | EXT-02 | ⚪ | La plantilla del grupo expone la administración sin autenticación; aquí exige `ecoairlines:admin` | Informativo | |
 | EXT-03 | 🟡 | El estado que fija el administrador no se refleja en `FlightSegment.status` de la búsqueda | Sí (si se quiere reflejar) | |
 | HALL-01…26 | — | Inconsistencias del contrato (sección 6). 2 resueltas, 24 abiertas | Sí | ver tabla |
@@ -157,8 +157,12 @@
 
 ### EXT-01 🟠 Endpoints propios que el booking debe conocer
 - `GET/PUT /customers/me` (perfil, scope `ecoairlines:profile`), `PUT /bookings/{bookingId}/seat` (cambio de asiento, `flights:book`),
-  `GET /admin/dashboard-stats`, `PUT /admin/flights/{flightNumber}/status`, `GET /admin/flights/{flightNumber}/passengers` y
-  `GET /admin/observability` (`ecoairlines:admin`).
+  `GET /admin/dashboard-stats`, `GET /admin/flights`, `PUT /admin/flights/{flightNumber}/status`, `GET /admin/flights/{flightNumber}/passengers`,
+  `GET /admin/fleet-schedule`, `GET /admin/observability`, `GET /admin/events` (eventos y entregas de webhooks) y el CRUD de rutas
+  programadas `GET/POST /admin/routes` y `GET/PUT/DELETE /admin/routes/{routeId}`, y de la flota `GET /admin/aircraft-types`,
+  `GET/POST /admin/aircraft` y `GET/PUT/DELETE /admin/aircraft/{registration}` (`ecoairlines:admin`).
+- Los webhooks salientes agregan cabeceras propias (`X-EcoAirlines-Event`, `X-EcoAirlines-Delivery`, `X-EcoAirlines-Signature`) y
+  campos propios en `data` (ver `EVENTOS.md`); el contrato no define cómo firmar ni cabeceras.
 - **Impacto:** los scopes `ecoairlines:*` no existen en el authorization server del contrato (`auth.booking-hub.com`); hoy los emite `dev-auth`.
 - **Acción:** acordar con el líder de booking si estas rutas pasan al contrato (o a un contrato propio de la aerolínea) y cómo se
   emiten los scopes y el rol de administrador.
@@ -172,6 +176,15 @@
 - `GET /flights/{flightNumber}/status` devuelve el estado que fija el administrador, pero el campo `status` de cada `FlightSegment` en la
   búsqueda y en las reservas sigue saliendo del GDS.
 - **Acción:** decidir si debe reflejarse también ahí (requiere que search consulte a flight-status: una dependencia nueva entre dominios).
+
+### EXT-04 🟡 Reglas de identidad y edad de los pasajeros *(V1.J)*
+- El contrato define `passengerType`, `birthDate`, `documentType` y `documentNumber`, pero no los rangos de edad ni que el documento sea único.
+- **Decisión** (regla de negocio, sin tocar el contrato):
+  - Rangos de edad: adulto 15+, joven 12–14, niño 2–11, infante < 2 durante todo el viaje. Son los mismos que ya mostraba el buscador.
+  - El documento no se repite en la reserva ni en otra reserva activa del mismo vuelo. Los nombres sí pueden repetirse.
+  - La cédula ecuatoriana se valida con su dígito verificador, y el documento no puede vencer antes del último vuelo.
+  - Todo responde `422 VALIDATION_FAILED` con `invalidParams`, el código que el contrato ya documenta para `POST /bookings`.
+- **Acción:** confirmar los rangos de edad con el grupo. Si otras aerolíneas del booking usan rangos distintos, convendría que el contrato los publique.
 
 ## 5. Documentación y proceso (`DOC`)
 

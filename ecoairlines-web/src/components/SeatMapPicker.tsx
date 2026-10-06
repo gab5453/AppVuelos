@@ -13,6 +13,8 @@ const CHARACTERISTIC_LABELS: Record<string, string> = {
 /**
  * Mapa de asientos de un segmento (`GET /offers/{offerId}/seatmap`). Solo se pueden elegir asientos
  * libres de la cabina comprada; los ya elegidos por otros pasajeros de la misma reserva se bloquean.
+ * Con `companions` (asiento → iniciales) esos asientos muestran las iniciales del acompañante y, si se pasa
+ * `onCompanionClick`, al tocarlos se cambia a ese pasajero.
  */
 export function SeatMapPicker({
   offerId,
@@ -20,6 +22,9 @@ export function SeatMapPicker({
   cabinClass,
   selected,
   takenByOthers,
+  companions = {},
+  onCompanionClick,
+  showSummary = true,
   onSelect,
 }: {
   offerId: string;
@@ -27,6 +32,9 @@ export function SeatMapPicker({
   cabinClass: string;
   selected?: string;
   takenByOthers: string[];
+  companions?: Record<string, string>;
+  onCompanionClick?: (seat: string) => void;
+  showSummary?: boolean;
   onSelect: (seat: string | undefined) => void;
 }) {
   const requestKey = `${offerId}|${segmentId}`;
@@ -56,6 +64,7 @@ export function SeatMapPicker({
       <div className="seatmap-legend" aria-hidden="true">
         <span><i className="seat-dot seat-free" /> Libre</span>
         <span><i className="seat-dot seat-selected" /> Tu elección</span>
+        {Object.keys(companions).length > 0 && <span><i className="seat-dot seat-companion" /> Tu grupo</span>}
         <span><i className="seat-dot seat-taken" /> Ocupado</span>
         <span><i className="seat-dot seat-extra" /> Espacio extra</span>
       </div>
@@ -66,6 +75,7 @@ export function SeatMapPicker({
             {row.seats?.map((seat) => {
               const number = seat.seatNumber ?? '';
               const isSelected = number === selected;
+              const companion = isSelected ? undefined : companions[number];
               const unavailable = !seat.isAvailable || takenByOthers.includes(number);
               const traits = (seat.characteristics ?? []).map((trait) => CHARACTERISTIC_LABELS[trait]).join(', ');
               return (
@@ -74,23 +84,23 @@ export function SeatMapPicker({
                   type="button"
                   className={[
                     'seat',
-                    isSelected ? 'seat-selected' : unavailable ? 'seat-taken' : 'seat-free',
+                    isSelected ? 'seat-selected' : companion ? 'seat-companion' : unavailable ? 'seat-taken' : 'seat-free',
                     seat.characteristics?.includes('EXTRA_LEGROOM') ? 'seat-extra' : '',
                     seat.characteristics?.includes('AISLE') ? 'seat-aisle' : '',
                   ].join(' ')}
-                  disabled={unavailable && !isSelected}
+                  disabled={unavailable && !isSelected && !(companion && onCompanionClick)}
                   aria-pressed={isSelected}
-                  aria-label={`Asiento ${number}${traits ? `, ${traits}` : ''}${unavailable ? ', ocupado' : ''}`}
-                  onClick={() => onSelect(isSelected ? undefined : number)}
+                  aria-label={`Asiento ${number}${traits ? `, ${traits}` : ''}${companion ? `, de ${companion}` : unavailable ? ', ocupado' : ''}`}
+                  onClick={() => (companion ? onCompanionClick?.(number) : onSelect(isSelected ? undefined : number))}
                 >
-                  {number.replace(/^\d+/, '')}
+                  {companion ?? number.replace(/^\d+/, '')}
                 </button>
               );
             })}
           </div>
         ))}
       </div>
-      <p className="muted small">{selected ? `Seleccionado: ${selected}` : 'Sin elegir: te asignaremos uno en el check-in, sin costo.'}</p>
+      {showSummary && <p className="muted small">{selected ? `Seleccionado: ${selected}` : 'Sin elegir: te asignaremos uno en el check-in, sin costo.'}</p>}
     </div>
   );
 }

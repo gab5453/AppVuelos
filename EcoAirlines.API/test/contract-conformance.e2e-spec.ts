@@ -238,7 +238,7 @@ describe('Conformidad de respuestas con el contrato (Fase 7) (e2e)', () => {
 
     it('GET /flights/{flightNumber}/status → 200 y 404', async () => {
       const date = localDateInDays(1);
-      expectContract('get', '/flights/{flightNumber}/status', await http().get('/flights/EA300/status').query({ date }));
+      expectContract('get', '/flights/{flightNumber}/status', await http().get('/flights/EA104/status').query({ date }));
       expectContract('get', '/flights/{flightNumber}/status', await http().get('/flights/EA999/status').query({ date }));
     });
   });

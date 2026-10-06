@@ -64,6 +64,16 @@ export class BookingsFacade {
    * Todas las reservas, como copias de solo lectura, de la más reciente a la más antigua. Solo para el dominio
    * admin (indicadores y pasajeros por vuelo); el controller que lo usa exige el scope de administrador.
    */
+  /**
+   * Datos de la reserva para publicar un evento `booking.*`, incluido su dueño (`sub`): el bus entrega el evento solo a
+   * las suscripciones de ese dueño. Es lo único que expone el dueño fuera del dominio bookings, y nunca sale en el payload.
+   */
+  async eventSubject(bookingId: string): Promise<{ bookingId: string; pnr: string; status: string; ownerId: string }> {
+    const record = await this.bookings.findById(bookingId);
+    if (!record) throw new Error(`Reserva ${bookingId} inexistente`);
+    return { bookingId: record.bookingId, pnr: record.pnr, status: record.status, ownerId: record.ownerId };
+  }
+
   async listAll(): Promise<BookingSnapshot[]> {
     return (await this.bookings.findAll())
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))

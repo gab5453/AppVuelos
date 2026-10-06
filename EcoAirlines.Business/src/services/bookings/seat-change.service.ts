@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { DomainEventBus } from '../../common/events/domain-event-bus.js';
 import {
   RESERVATION_SYSTEM_GATEWAY,
   type ReservationSystemGateway,
@@ -21,6 +22,7 @@ export class SeatChangeService {
   constructor(
     private readonly bookings: BookingsFacade,
     @Inject(RESERVATION_SYSTEM_GATEWAY) private readonly reservationSystem: ReservationSystemGateway,
+    private readonly events: DomainEventBus,
   ) {
     this.seats = new SeatAssigner(reservationSystem);
   }
@@ -77,6 +79,12 @@ export class SeatChangeService {
         [change],
         `Cambio de asiento de ${passenger.passengerId} en ${segmentId}: ${current ?? 'sin asiento'} → ${newSeatNumber}.`,
       );
+      this.events.publishBooking('booking.changed', await this.bookings.eventSubject(booking.bookingId), {
+        reason: 'SEAT_CHANGE',
+        passengerId: passenger.passengerId,
+        segmentId,
+        seatNumber: newSeatNumber,
+      });
     }
 
     return {

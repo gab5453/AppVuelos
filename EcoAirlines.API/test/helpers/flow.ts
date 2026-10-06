@@ -13,6 +13,15 @@ export function paymentRef(tag = 'ok'): string {
   return `pay_${tag}_${randomUUID().slice(0, 8)}`;
 }
 
+/** Fecha de nacimiento que encaja en el rango de edad de cada tipo de pasajero (adulto 15+, joven 12–14, niño 2–11, infante < 2). */
+const BIRTH_DATE_BY_TYPE: Record<string, () => string> = {
+  ADULT: () => '1990-05-20',
+  YOUTH: () => localDateInDays(-13 * 365),
+  CHILD: () => localDateInDays(-7 * 365),
+  INFANT: () => localDateInDays(-200),
+};
+
+/** Documento único: la API no deja que el mismo documento viaje dos veces en un vuelo, ni repetido en una reserva. */
 export function passenger(passengerId: string, passengerType = 'ADULT', extra: Record<string, unknown> = {}) {
   return {
     passengerId,
@@ -20,9 +29,9 @@ export function passenger(passengerId: string, passengerType = 'ADULT', extra: R
     firstName: 'Ana',
     lastName: 'Verde',
     documentType: 'PASSPORT',
-    documentNumber: `X${passengerId}`,
+    documentNumber: `X${randomUUID().replace(/-/g, '').slice(0, 10).toUpperCase()}`,
     nationality: 'EC',
-    birthDate: passengerType === 'INFANT' ? '2026-01-15' : '1990-05-20',
+    birthDate: (BIRTH_DATE_BY_TYPE[passengerType] ?? BIRTH_DATE_BY_TYPE.ADULT!)(),
     gender: 'F',
     contact: { email: 'ana@example.com', phone: '+593000000000' },
     ...extra,

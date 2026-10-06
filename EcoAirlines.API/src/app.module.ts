@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { BusinessModule } from '@ecoairlines/business/business.module.js';
 import { AuthModule } from './auth/auth.module.js';
+import { AdminFleetController } from './controllers/admin/admin-fleet.controller.js';
+import { AdminRoutesController } from './controllers/admin/admin-routes.controller.js';
 import { AdminController } from './controllers/admin/admin.controller.js';
 import { ObservabilityController } from './controllers/admin/observability.controller.js';
 import { BookingOwnershipGuard } from './controllers/bookings/booking-ownership.guard.js';
@@ -54,6 +56,8 @@ import { SecurityModule } from './security/security.module.js';
     SeatChangeController,
     CustomerProfileController,
     AdminController,
+    AdminRoutesController,
+    AdminFleetController,
     ObservabilityController,
   ],
   providers: [DeviceFingerprintGuard, BookingOwnershipGuard, HttpMetricsStore],

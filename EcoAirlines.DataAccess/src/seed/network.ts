@@ -1,7 +1,7 @@
 import type { CabinClass } from '../common/contract/common.types.js';
 
 /**
- * Red simulada de la aerolínea: aviones, vuelos diarios y familias tarifarias.
+ * Red simulada de la aerolínea: aviones y familias tarifarias. El horario de vuelos se genera en `timetable.ts`.
  * Código de aerolínea ficticio (EA, "EcoAirlines"); ver HALL-10.
  */
 export const AIRLINE = { code: 'EA', name: 'EcoAirlines' } as const;
@@ -32,66 +32,6 @@ export const AIRCRAFT: Readonly<Record<AircraftType, CabinLayout[]>> = {
     { cabinClass: 'ECONOMY', firstRow: 10, lastRow: 40, layout: 'ABC-DEF-GHJ', exitRows: [20, 30], extraLegroomRows: [10, 20, 30] },
   ],
 };
-
-export interface ScheduledFlight {
-  flightNumber: string;
-  origin: string;
-  destination: string;
-  /** Hora local de salida en el aeropuerto de origen (HH:MM). Todos los vuelos operan a diario. */
-  departureLocal: string;
-  aircraft: AircraftType;
-}
-
-const A220: AircraftType = 'Airbus A220-300';
-const A320: AircraftType = 'Airbus A320neo';
-const B789: AircraftType = 'Boeing 787-9';
-
-export const SCHEDULE: readonly ScheduledFlight[] = (
-  [
-    ['EA200', 'UIO', 'GYE', '06:00', A220],
-    ['EA202', 'UIO', 'GYE', '12:30', A220],
-    ['EA204', 'UIO', 'GYE', '19:00', A220],
-    ['EA201', 'GYE', 'UIO', '07:30', A220],
-    ['EA203', 'GYE', 'UIO', '14:00', A220],
-    ['EA205', 'GYE', 'UIO', '20:30', A220],
-    ['EA210', 'UIO', 'CUE', '08:00', A220],
-    ['EA211', 'CUE', 'UIO', '09:45', A220],
-    ['EA212', 'GYE', 'CUE', '16:00', A220],
-    ['EA213', 'CUE', 'GYE', '17:45', A220],
-    ['EA300', 'UIO', 'BOG', '07:00', A320],
-    ['EA302', 'UIO', 'BOG', '15:30', A320],
-    ['EA301', 'BOG', 'UIO', '10:30', A320],
-    ['EA303', 'BOG', 'UIO', '19:00', A320],
-    ['EA310', 'GYE', 'BOG', '09:00', A320],
-    ['EA311', 'BOG', 'GYE', '13:30', A320],
-    ['EA320', 'UIO', 'LIM', '08:30', A320],
-    ['EA321', 'LIM', 'UIO', '13:00', A320],
-    ['EA322', 'GYE', 'LIM', '07:15', A320],
-    ['EA323', 'LIM', 'GYE', '11:30', A320],
-    ['EA330', 'BOG', 'MDE', '08:00', A220],
-    ['EA332', 'BOG', 'MDE', '17:00', A220],
-    ['EA331', 'MDE', 'BOG', '10:00', A220],
-    ['EA333', 'MDE', 'BOG', '19:30', A220],
-    ['EA400', 'BOG', 'MIA', '09:30', A320],
-    ['EA401', 'MIA', 'BOG', '16:00', A320],
-    ['EA402', 'UIO', 'MIA', '23:45', A320],
-    ['EA403', 'MIA', 'UIO', '15:00', A320],
-    ['EA410', 'BOG', 'MEX', '08:15', A320],
-    ['EA411', 'MEX', 'BOG', '15:30', A320],
-    ['EA420', 'LIM', 'SCL', '06:45', A320],
-    ['EA421', 'SCL', 'LIM', '13:00', A320],
-    ['EA500', 'BOG', 'MAD', '19:00', B789],
-    ['EA501', 'MAD', 'BOG', '12:00', B789],
-    ['EA502', 'UIO', 'MAD', '17:30', B789],
-    ['EA503', 'MAD', 'UIO', '11:30', B789],
-  ] as const
-).map(([flightNumber, origin, destination, departureLocal, aircraft]) => ({
-  flightNumber,
-  origin,
-  destination,
-  departureLocal,
-  aircraft,
-}));
 
 /** Terminales conocidas; el resto de aeropuertos opera con terminal única (`null`). */
 export const TERMINALS: Readonly<Record<string, string>> = { BOG: '1', MAD: '4S', MIA: 'N', MEX: '1' };

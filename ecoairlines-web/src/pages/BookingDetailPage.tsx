@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { getBooking } from '../api/endpoints';
-import type { BookingDetail } from '../api/types';
+import type { BookingDetail, PassengerItem } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { ItinerarySummary } from '../components/ItinerarySummary';
 import { ProblemAlert } from '../components/ProblemAlert';
@@ -127,7 +127,7 @@ export function BookingDetailPage() {
               <tr>
                 <th scope="col">Pasajero</th>
                 <th scope="col">Asientos</th>
-                <th scope="col">Maletas extra</th>
+                <th scope="col" title="Maletas de bodega en todos los vuelos: total (las extra pagadas)">Maletas (Extra)</th>
                 <th scope="col">Boleto</th>
               </tr>
             </thead>
@@ -141,7 +141,7 @@ export function BookingDetailPage() {
                       <span className="muted small"> · {PASSENGER_LABELS[passenger.passengerType]}</span>
                     </td>
                     <td>{passenger.assignedSeats?.map((seat) => seat.seatNumber).join(', ') || '—'}</td>
-                    <td>{passenger.extraBaggage?.reduce((sum, bag) => sum + bag.quantity, 0) || '—'}</td>
+                    <td>{baggageSummary(booking, passenger)}</td>
                     <td>
                       {ticket?.eTicketNumber ?? '—'}
                       {ticket && <span className="muted small"> · {STATUS_LABELS[ticket.status] ?? ticket.status}</span>}
@@ -197,4 +197,18 @@ export function BookingDetailPage() {
       )}
     </div>
   );
+}
+
+/**
+ * Maletas de bodega del pasajero en todos los vuelos, como "total (extra)": las incluidas en la tarifa comprada de cada
+ * itinerario más las extra pagadas. Los infantes no tienen franquicia propia.
+ */
+function baggageSummary(booking: BookingDetail, passenger: PassengerItem): string {
+  if (passenger.passengerType === 'INFANT') return '—';
+  const extra = passenger.extraBaggage?.reduce((sum, bag) => sum + bag.quantity, 0) ?? 0;
+  const included = (booking.itineraries ?? []).reduce(
+    (sum, itinerary) => sum + (itinerary.pricingOptions[0]?.baggageAllowance.checkedBaggageIncluded ?? 0),
+    0,
+  );
+  return `${included + extra} (${extra})`;
 }

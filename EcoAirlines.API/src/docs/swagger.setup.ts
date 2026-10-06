@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { INestApplication } from '@nestjs/common';
@@ -35,6 +35,8 @@ export interface SwaggerOptions {
   devOverlay: boolean;
   /** URL del servidor local que se antepone a los `servers` del contrato. */
   localServerUrl: string;
+  /** URL de dev-auth para su documento (solo con `devOverlay`). Por defecto `DEV_AUTH_URL` o http://localhost:4000. */
+  devAuthUrl?: string;
 }
 
 /** Lee el contrato en solo lectura. El archivo en disco nunca se modifica. */
@@ -105,6 +107,14 @@ export const EXTENSIONS_PATH = resolve(dirname(CONTRACT_PATH), 'ecoairlines-exte
 export const DOCS_EXTENSIONS_JSON_PATH = `${DOCS_PATH}/extensions.json`;
 
 /**
+ * Documento de **dev-auth** (otro servicio, solo desarrollo). Se publica en el selector de Swagger para poder llamar a
+ * `/login` y `/register` desde el mismo Swagger: el navegador llama directamente a dev-auth (su CORS admite el origen de la
+ * API). La API no gana rutas ni lógica de autenticación: solo sirve el documento. Nunca se publica en producción.
+ */
+export const DEV_AUTH_DOC_PATH = resolve(dirname(CONTRACT_PATH), '..', 'dev-auth', 'openapi.yaml');
+export const DOCS_DEV_AUTH_JSON_PATH = `${DOCS_PATH}/dev-auth.json`;
+
+/**
  * Lee el anexo de extensiones y le agrega, solo en memoria, los schemas y responses del contrato que referencia
  * (`PassengerItem`, `BookingDetail`, `FlightStatus`, `ProblemDetails404`...). Ningún archivo se modifica.
  */
@@ -143,6 +153,18 @@ export function setupSwagger(app: INestApplication, options: SwaggerOptions): Op
   http.get(DOCS_EXTENSIONS_JSON_PATH, (_req: Request, res: Response) => {
     res.json(extensions);
   });
+  const urls = [
+    { url: DOCS_JSON_PATH, name: 'Contrato GDS Flight Core API (vuelos-openapi.yaml)' },
+    { url: DOCS_EXTENSIONS_JSON_PATH, name: 'Extensiones EcoAirlines (fuera del contrato)' },
+  ];
+  if (options.devOverlay && existsSync(DEV_AUTH_DOC_PATH)) {
+    const devAuth = load(readFileSync(DEV_AUTH_DOC_PATH, 'utf8')) as OpenApiDocument;
+    devAuth.servers = [{ url: options.devAuthUrl ?? process.env.DEV_AUTH_URL ?? 'http://localhost:4000', description: 'dev-auth (desarrollo)' }];
+    http.get(DOCS_DEV_AUTH_JSON_PATH, (_req: Request, res: Response) => {
+      res.json(devAuth);
+    });
+    urls.push({ url: DOCS_DEV_AUTH_JSON_PATH, name: 'dev-auth: login y registro (solo desarrollo, otro servicio)' });
+  }
   app.use(
     DOCS_PATH,
     swaggerUi.serve,
@@ -150,10 +172,7 @@ export function setupSwagger(app: INestApplication, options: SwaggerOptions): Op
       customSiteTitle: 'EcoAirlines API — Contrato y extensiones',
       explorer: true,
       swaggerOptions: {
-        urls: [
-          { url: DOCS_JSON_PATH, name: 'Contrato GDS Flight Core API (vuelos-openapi.yaml)' },
-          { url: DOCS_EXTENSIONS_JSON_PATH, name: 'Extensiones EcoAirlines (fuera del contrato)' },
-        ],
+        urls,
         persistAuthorization: true,
         displayRequestDuration: true,
       },

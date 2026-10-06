@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { DomainEventBus } from '../../common/events/domain-event-bus.js';
 import { randomUUID } from 'node:crypto';
 import type { MoneyAmount, PassengerItem } from '@ecoairlines/data-access/common/contract/common.types.js';
 import { moneyFromCents, scaleMoney, sumMoney } from '@ecoairlines/data-access/common/money.js';
@@ -8,6 +9,7 @@ import { paymentProblem } from '../../common/payments/payment-problem.js';
 import { SeatAssigner } from '../../common/seating/seat-assigner.js';
 import { buildTickets, generatePnr, issuePendingTickets } from '../../rules/bookings/booking-records.js';
 import { assertPassengersMatchHold } from '../../rules/bookings/passenger-rules.js';
+import { assertPassengerIdentities, identityKey, travelDates } from '../../rules/bookings/passenger-identity-rules.js';
 import type { BookingRecord } from '@ecoairlines/data-access/entities/bookings/booking.entity.js';
 import { BOOKING_REPOSITORY, type BookingRepository } from '@ecoairlines/data-management/interfaces/bookings/booking.repository.js';
 import { HOLD_GATEWAY_PORT, type HoldGatewayPort, type HoldLookup } from './hold-gateway.port.js';
@@ -39,6 +41,7 @@ export class BookingsService {
     @Inject(PAYMENT_VERIFIER_GATEWAY) private readonly payments: PaymentVerifierGateway,
     @Inject(RESERVATION_SYSTEM_GATEWAY) private readonly reservationSystem: ReservationSystemGateway,
     private readonly tasks: DeferredTaskRunner,
+    private readonly events: DomainEventBus,
   ) {
     this.seats = new SeatAssigner(reservationSystem);
   }
@@ -60,6 +63,8 @@ export class BookingsService {
       hold.selections.map((selection) => selection.itineraryId),
       segmentIds,
     );
+    assertPassengerIdentities(passengers, travelDates(segmentIds));
+    await this.assertNotAlreadyOnFlight(passengers, segmentIds);
 
     const grandTotal = sumMoney([hold.lockedPrice, await this.extraBaggageCost(passengers)]);
 
@@ -117,7 +122,11 @@ export class BookingsService {
       },
     });
 
-    if (!issued) {
+    if (issued) {
+      this.events.publishBooking('booking.confirmed', record);
+      this.events.publishBooking('booking.ticket_issued', record, { tickets: record.tickets?.length ?? 0 });
+    } else {
+      this.events.publishBooking('booking.ticket_issuing', record);
       this.tasks.schedule(`ticket-issuance:${bookingId}`, () => this.completeIssuance(bookingId));
     }
     return { statusCode: issued ? 201 : 202, booking: toDetail(record) };
@@ -164,11 +173,37 @@ export class BookingsService {
     const record = await this.bookingRepository.findById(bookingId);
     if (!record || record.status !== 'PENDING_PAYMENT') return;
     const now = new Date().toISOString();
-    await this.bookingRepository.update(bookingId, {
+    const updated = await this.bookingRepository.update(bookingId, {
       status: 'CONFIRMED',
       tickets: issuePendingTickets(record.tickets ?? [], now),
       changes: [...(record.changes ?? []), { changedAt: now, description: 'Pago confirmado y tickets emitidos.' }],
     });
+    this.events.publishBooking('booking.confirmed', updated);
+    this.events.publishBooking('booking.ticket_issued', updated, { tickets: updated.tickets?.length ?? 0 });
+  }
+
+  /**
+   * Una persona (mismo país y número de documento) no puede estar dos veces en el mismo vuelo, aunque sea en otra reserva.
+   * Las reservas canceladas o fallidas no cuentan. 422 VALIDATION_FAILED.
+   */
+  private async assertNotAlreadyOnFlight(passengers: PassengerItem[], segmentIds: string[]): Promise<void> {
+    const wanted = new Map(passengers.map((passenger, index) => [identityKey(passenger), index]));
+    const segments = new Set(segmentIds);
+    for (const booking of await this.bookingRepository.findAll()) {
+      if (booking.status === 'CANCELLED' || booking.status === 'FAILED') continue;
+      const shared = booking.internal.fares.flatMap((fare) => fare.segmentIds).find((segmentId) => segments.has(segmentId));
+      if (!shared) continue;
+      for (const existing of booking.passengers ?? []) {
+        const index = wanted.get(identityKey(existing));
+        if (index === undefined) continue;
+        throw new ProblemDetailsException({
+          status: 422,
+          code: 'VALIDATION_FAILED',
+          title: `El pasajero ${index + 1} ya tiene una reserva en el vuelo ${shared.split('-')[0]} con el mismo documento.`,
+          invalidParams: [{ name: `passengers[${index}].documentNumber`, reason: `already booked on ${shared}` }],
+        });
+      }
+    }
   }
 
   private async extraBaggageCost(passengers: PassengerItem[]): Promise<MoneyAmount> {

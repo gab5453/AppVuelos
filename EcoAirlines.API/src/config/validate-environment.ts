@@ -36,6 +36,10 @@ export function validateEnvironment(env: NodeJS.ProcessEnv = process.env): strin
     }
   }
 
+  if (env.WEBHOOK_DELIVERY !== undefined && !['http', 'log'].includes(env.WEBHOOK_DELIVERY)) {
+    errors.push('WEBHOOK_DELIVERY debe ser http o log.');
+  }
+
   if (Boolean(env.HTTPS_KEY_PATH) !== Boolean(env.HTTPS_CERT_PATH)) {
     errors.push('HTTPS_KEY_PATH y HTTPS_CERT_PATH deben definirse juntos.');
   }

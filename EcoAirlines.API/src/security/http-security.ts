@@ -67,10 +67,14 @@ function securityHeaders(config: SecurityConfig, docsPath: string) {
   });
 
   // Swagger UI carga sus scripts, estilos e imágenes desde el mismo origen.
-  // En local (http) no se fuerza upgrade-insecure-requests, que rompería la carga.
+  // En local (http) no se fuerza upgrade-insecure-requests, que rompería la carga. Fuera de producción también puede
+  // llamar a dev-auth (documento "dev-auth" del selector), que es otro origen.
   const docsHelmet = helmet({
     contentSecurityPolicy: {
-      directives: { upgradeInsecureRequests: config.isProduction ? [] : null },
+      directives: {
+        upgradeInsecureRequests: config.isProduction ? [] : null,
+        connectSrc: config.isProduction ? ["'self'"] : ["'self'", process.env.DEV_AUTH_URL ?? 'http://localhost:4000'],
+      },
     },
     strictTransportSecurity: hsts,
   });

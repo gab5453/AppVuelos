@@ -33,6 +33,14 @@ export function formatDateTime(iso: string | undefined): string {
   return iso ? new Date(iso).toLocaleString('es-EC', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
 }
 
+/** Días con vuelos publicados, contando hoy: 13 semanas exactas (igual que el horario del GDS). */
+export const SALES_WINDOW_DAYS = 91;
+
+/** Último día con vuelos a la venta (hoy + 90). */
+export function lastSaleDate(): string {
+  return todayIso(SALES_WINDOW_DAYS - 1);
+}
+
 /** Fecha local de hoy (YYYY-MM-DD) en la zona del navegador, para los mínimos de los date pickers. */
 export function todayIso(offsetDays = 0): string {
   const date = new Date();

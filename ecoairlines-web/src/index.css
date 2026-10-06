@@ -405,14 +405,16 @@ img {
 
 /* ── Hero ── */
 .hero {
+  /* Sin overflow: hidden: recortaba el selector de pasajeros. El fondo (svg) ya se recorta solo. */
   position: relative;
-  overflow: hidden;
+  z-index: 2;
   color: #fff;
   padding: 48px 0 56px;
   background: var(--green-900);
 }
 
 .hero-art {
+  overflow: hidden;
   position: absolute;
   inset: 0;
   width: 100%;
@@ -603,6 +605,16 @@ select:focus-visible {
   color: var(--danger);
   font-weight: 600;
   margin-top: 8px;
+}
+
+.field-error {
+  color: var(--danger);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.field input[aria-invalid='true'] {
+  border-color: var(--danger);
 }
 
 .pax-picker {
@@ -1160,6 +1172,280 @@ select:focus-visible {
   background: var(--success-bg);
 }
 
+.seat-companion {
+  background: var(--success-bg);
+  color: var(--primary-strong);
+  border: 2px solid var(--primary);
+  font-weight: 700;
+  font-size: 0.7rem;
+}
+
+/* ── Paneles de asientos y equipaje del checkout (todo el grupo en un solo lugar) ── */
+.picker .tabs {
+  margin-bottom: 12px;
+}
+
+.picker-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.picker-people {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.person-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  padding: 8px 10px;
+  font: inherit;
+  text-align: left;
+}
+
+.person-card.is-active {
+  border: 2px solid var(--primary);
+  padding: 7px 9px;
+}
+
+.person-select {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.person-card.person-select {
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+}
+
+button.person-card.person-select.is-active {
+  border: 2px solid var(--primary);
+  padding: 7px 9px;
+}
+
+.person-badge {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--border);
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.person-badge.has-seat {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.person-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.person-text strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.person-radio {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+}
+
+.person-radio.is-on {
+  border: 5px solid var(--primary);
+}
+
+.person-price {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.picker-map .seatmap {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.picker-hint {
+  margin: 0 0 8px;
+}
+
+.picker-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.allowance-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.allowance-chip {
+  background: var(--surface-muted, var(--success-bg));
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 0.85rem;
+}
+
+.allowance-chip.is-off {
+  background: var(--border);
+  color: var(--text-muted);
+}
+
+.bag-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px 16px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+}
+
+.bag-icon {
+  font-size: 2.2rem;
+}
+
+.bag-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bag-total {
+  grid-column: 2 / 4;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 6px;
+}
+
+.stepper button {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid var(--text);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.stepper button:last-child {
+  background: var(--text);
+  color: var(--surface);
+}
+
+.stepper button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.stepper output {
+  min-width: 1.2em;
+  text-align: center;
+  font-weight: 700;
+}
+
+.picker-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px 16px;
+  border-top: 1px solid var(--border);
+  margin-top: 16px;
+  padding-top: 12px;
+}
+
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.inline-check input {
+  accent-color: var(--primary);
+  width: 18px;
+  height: 18px;
+}
+
+@media (max-width: 700px) {
+  .picker-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .bag-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .bag-card .stepper {
+    grid-column: 1 / 3;
+    justify-self: start;
+  }
+
+  .bag-total {
+    grid-column: 1 / 3;
+  }
+}
+
 /* ── Mis viajes y detalle ── */
 .filters {
   display: flex;
@@ -1429,6 +1715,11 @@ th {
   flex-direction: column;
   gap: 12px;
 }
+/* En columnas, el flex-basis de 160px de .field se volvía altura: espacio vacío bajo cada campo. */
+.auth-card .field,
+.panel-form .field {
+  flex: 0 0 auto;
+}
 
 /* ── Compromiso verde ── */
 .fare-families {
@@ -1578,4 +1869,53 @@ th {
 a.session-name {
   color: inherit;
   text-decoration: underline dotted;
+}
+.fleet-legs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fleet-legs li {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-tint);
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+/* Vuelos con asientos reservados por clientes: se resaltan en el panel de administración. */
+.row-highlight td {
+  background: var(--success-bg);
+}
+
+/* ── Rutas programadas (CRUD del panel admin) ── */
+.route-form {
+  margin: 12px 0 16px;
+}
+
+.route-form h3 {
+  margin-top: 0;
+}
+
+.weekday-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: none;
+  padding: 0;
+  margin: 0 0 12px;
+}
+
+.weekday-picker legend {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }

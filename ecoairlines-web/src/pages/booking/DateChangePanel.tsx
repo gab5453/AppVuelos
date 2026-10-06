@@ -3,7 +3,7 @@ import { confirmDateChange, searchDateChange } from '../../api/endpoints';
 import type { BookingDetail, DateChangeSearchResponse } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
 import { ProblemAlert } from '../../components/ProblemAlert';
-import { formatMoney, localDate, localTime, todayIso } from '../../lib/format';
+import { formatMoney, lastSaleDate, localDate, localTime, todayIso } from '../../lib/format';
 import { useIdempotencyKey } from '../../lib/request-ids';
 import { PaymentReferenceField } from './PaymentReferenceField';
 
@@ -78,7 +78,7 @@ export function DateChangePanel({ booking, onChanged }: { booking: BookingDetail
         </label>
         <label className="field">
           Nueva fecha
-          <input type="date" min={todayIso()} value={newDate} onChange={(event) => setNewDate(event.target.value)} required />
+          <input type="date" min={todayIso()} max={lastSaleDate()} value={newDate} onChange={(event) => setNewDate(event.target.value)} required />
         </label>
         {!changeable && <p className="muted small">La tarifa de este vuelo no admite cambios; puedes consultarlo igualmente.</p>}
         <button type="submit" className="btn btn-primary" disabled={busy}>{busy && !offers ? 'Buscando…' : 'Buscar opciones'}</button>

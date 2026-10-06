@@ -119,6 +119,48 @@ paths:
           $ref: '#/components/responses/Unauthorized401'
         '403':
           $ref: '#/components/responses/ProblemDetails403'
+  /admin/flights:
+    get:
+      tags: [Admin]
+      summary: Ocupación de los vuelos por fecha, aeropuerto de origen o ruta
+      description: |
+        Para observar cómo se reservan los asientos de cualquier día publicado. Sin `date` se usa hoy (Quito). Con `origin`
+        se limita a los vuelos que salen de ese aeropuerto; con `origin` y `destination`, a una ruta. Más allá de los 91 días
+        responde 400. Requiere `ecoairlines:admin`.
+      parameters:
+        - name: date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: origin
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[A-Z]{3}$'
+        - name: destination
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[A-Z]{3}$'
+      responses:
+        '200':
+          description: Vuelos con su ocupación
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FlightOccupancy'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
   /admin/flights/{flightNumber}/status:
     put:
       tags: [Admin]
@@ -175,6 +217,334 @@ paths:
           $ref: '#/components/responses/ProblemDetails403'
         '404':
           $ref: '#/components/responses/ProblemDetails404'
+  /admin/fleet-schedule:
+    get:
+      tags: [Admin]
+      summary: Horario de la flota (rotación de cada avión) en una fecha
+      description: |
+        Cada avión con los vuelos que opera ese día, en orden. El plan de flota garantiza que ningún avión esté en dos
+        vuelos a la vez. Se publica el horario de 91 días (13 semanas); más adelante responde 400. Requiere `ecoairlines:admin`.
+      parameters:
+        - name: date
+          in: query
+          required: false
+          description: Fecha local (YYYY-MM-DD). Si se omite, hoy en Quito.
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Horario de la flota
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FleetSchedule'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+  /admin/routes:
+    get:
+      tags: [Admin]
+      summary: Listar rutas programadas (CRUD del horario)
+      description: |
+        Rutas de ida y vuelta que forman el horario semanal: la red base (`source: NETWORK`) y las creadas por un
+        administrador (`source: ADMIN`). Incluye los aviones asignados y los cupos ya vendidos. Requiere `ecoairlines:admin`.
+      parameters:
+        - name: airport
+          in: query
+          required: false
+          description: Solo las rutas que salen de o llegan a este aeropuerto (IATA).
+          schema:
+            type: string
+            pattern: '^[A-Z]{3}$'
+      responses:
+        '200':
+          description: Rutas programadas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ScheduledRoute'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+    post:
+      tags: [Admin]
+      summary: Crear una ruta programada
+      description: |
+        Crea una línea de ida y vuelta con números de vuelo nuevos (desde EA300). El GDS asigna los aviones (con base en el
+        origen) y valida que ninguno quede en dos lugares a la vez; si no se puede operar responde 422 con los conflictos.
+        Los vuelos quedan a la venta al instante en los 91 días publicados.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduledRouteRequest'
+      responses:
+        '201':
+          description: Ruta creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledRoute'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '422':
+          $ref: '#/components/responses/ProblemDetails422'
+  /admin/routes/{routeId}:
+    parameters:
+      - name: routeId
+        in: path
+        required: true
+        description: 'Formato `<vuelo de ida>-<vuelo de vuelta>`, p. ej. `EA104-EA123`.'
+        schema:
+          type: string
+    get:
+      tags: [Admin]
+      summary: Consultar una ruta programada
+      responses:
+        '200':
+          description: Ruta programada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledRoute'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+    put:
+      tags: [Admin]
+      summary: Editar una ruta programada
+      description: |
+        Reemplaza horas, días, aeropuertos y tipo de avión; conserva los números de vuelo. Si la ruta tiene cupos vendidos o
+        retenidos responde 409: para un vuelo con pasajeros se usa `PUT /admin/flights/{flightNumber}/status`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduledRouteRequest'
+      responses:
+        '200':
+          description: Ruta actualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledRoute'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '409':
+          $ref: '#/components/responses/ProblemDetails409'
+        '422':
+          $ref: '#/components/responses/ProblemDetails422'
+    delete:
+      tags: [Admin]
+      summary: Dar de baja una ruta programada
+      description: Quita sus vuelos del horario y libera sus aviones. Con cupos vendidos o retenidos responde 409.
+      responses:
+        '204':
+          description: Ruta dada de baja
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '409':
+          $ref: '#/components/responses/ProblemDetails409'
+  /admin/aircraft-types:
+    get:
+      tags: [Admin]
+      summary: Tipos de avión (datos maestros, solo consulta)
+      description: |
+        Asientos por cabina, alcance máximo de ruta, tiempo en tierra y cuántos hay en la flota. Los tipos no se editan desde
+        el panel: definen el mapa de asientos de los vuelos ya vendidos. Requiere `ecoairlines:admin`.
+      responses:
+        '200':
+          description: Tipos de avión
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AircraftTypeInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+  /admin/aircraft:
+    get:
+      tags: [Admin]
+      summary: Listar la flota
+      description: Cada avión con su base, si opera rutas (`IN_SERVICE`) o está libre (`AVAILABLE`) y qué rutas opera.
+      parameters:
+        - name: base
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[A-Z]{3}$'
+        - name: aircraftType
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/AircraftType'
+      responses:
+        '200':
+          description: Aviones
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Aircraft'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+    post:
+      tags: [Admin]
+      summary: Registrar un avión
+      description: |
+        La matrícula se asigna sola: la siguiente libre del tipo (HC-J para A220, HC-N para A320neo, HC-W para 787-9). El avión
+        queda `AVAILABLE` y se puede asignar a rutas con el campo `aircraft` de `POST/PUT /admin/routes`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AircraftRequest'
+            example:
+              aircraftType: Airbus A320neo
+              base: UIO
+      responses:
+        '201':
+          description: Avión registrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Aircraft'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '422':
+          $ref: '#/components/responses/ProblemDetails422'
+  /admin/aircraft/{registration}:
+    parameters:
+      - name: registration
+        in: path
+        required: true
+        description: Matrícula, p. ej. HC-N57.
+        schema:
+          type: string
+    get:
+      tags: [Admin]
+      summary: Consultar un avión
+      responses:
+        '200':
+          description: Avión
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Aircraft'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+    put:
+      tags: [Admin]
+      summary: Cambiar la base de un avión
+      description: Solo si está libre (`AVAILABLE`); si opera rutas responde 409. Un avión no cambia de tipo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAircraftRequest'
+      responses:
+        '200':
+          description: Avión actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Aircraft'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '409':
+          $ref: '#/components/responses/ProblemDetails409'
+        '422':
+          $ref: '#/components/responses/ProblemDetails422'
+    delete:
+      tags: [Admin]
+      summary: Retirar un avión de la flota
+      description: Solo si está libre; si opera rutas responde 409 (primero se le quitan sus rutas).
+      responses:
+        '204':
+          description: Avión retirado
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '409':
+          $ref: '#/components/responses/ProblemDetails409'
+  /admin/events:
+    get:
+      tags: [Admin]
+      summary: Últimos eventos de dominio y sus entregas por webhook
+      description: |
+        Los 50 eventos más recientes del bus interno (`booking.confirmed`, `booking.cancelled`, `flight.cancelled`…), con la
+        forma del `WebhookPayload` del contrato, y el resultado de su entrega a cada suscripción (`DELIVERED`, `FAILED` o
+        `SIMULATED` cuando `WEBHOOK_DELIVERY=log`). No incluye el dueño de las reservas. Se reinicia con la API.
+        Requiere `ecoairlines:admin`. Ver `EVENTOS.md`.
+      responses:
+        '200':
+          description: Eventos recientes (el más reciente primero)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DomainEvent'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
   /admin/observability:
     get:
       tags: [Admin]
@@ -207,7 +577,7 @@ components:
       required: true
       schema:
         type: string
-        example: EA300
+        example: EA104
     FlightDate:
       name: date
       in: query
@@ -313,7 +683,7 @@ components:
           type: number
     FlightOccupancy:
       type: object
-      required: [flightId, flightNumber, route, scheduledDeparture, status, totalSeats, bookedSeats, availableSeats, occupancyPercentage]
+      required: [flightId, flightNumber, route, scheduledDeparture, status, totalSeats, bookedSeats, availableSeats, occupancyPercentage, date, reservedSeats, simulatedSeats]
       properties:
         flightId:
           type: string
@@ -337,6 +707,16 @@ components:
           type: integer
         occupancyPercentage:
           type: number
+        date:
+          type: string
+          format: date
+          description: Fecha local de salida (extensión respecto a la plantilla).
+        reservedSeats:
+          type: integer
+          description: Cupos tomados por clientes de EcoAirlines (holds vigentes y reservas).
+        simulatedSeats:
+          type: integer
+          description: Pasajeros simulados de demostración (solo vuelos de la primera semana).
     AdminDashboardStats:
       type: object
       required:
@@ -477,3 +857,297 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/RecentError'
+    FleetLeg:
+      type: object
+      required: [segmentId, flightNumber, origin, destination, departure, arrival]
+      properties:
+        segmentId:
+          type: string
+          example: EA104-20261006
+        flightNumber:
+          type: string
+        origin:
+          type: string
+        destination:
+          type: string
+        departure:
+          type: string
+          format: date-time
+        arrival:
+          type: string
+          format: date-time
+    FleetAircraft:
+      type: object
+      required: [registration, aircraftType, base, flights]
+      properties:
+        registration:
+          type: string
+          example: HC-J01
+        aircraftType:
+          type: string
+          enum: [Airbus A220-300, Airbus A320neo, Boeing 787-9]
+        base:
+          type: string
+          description: Aeropuerto donde empieza su rotación.
+        flights:
+          type: array
+          items:
+            $ref: '#/components/schemas/FleetLeg'
+    FleetSchedule:
+      type: object
+      required: [date, salesWindow, totalFlights, aircraft]
+      properties:
+        date:
+          type: string
+          format: date
+        salesWindow:
+          type: object
+          required: [from, to, days]
+          properties:
+            from:
+              type: string
+              format: date
+            to:
+              type: string
+              format: date
+            days:
+              type: integer
+              example: 91
+        totalFlights:
+          type: integer
+        aircraft:
+          type: array
+          items:
+            $ref: '#/components/schemas/FleetAircraft'
+
+    ScheduledRouteRequest:
+      type: object
+      additionalProperties: false
+      required: [origin, destination, outboundDepartureLocal, inboundDepartureLocal, weekdays]
+      properties:
+        origin:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          description: Aeropuerto de salida de la ida y base de los aviones.
+        destination:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        outboundDepartureLocal:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          description: Hora local de salida de la ida (en el origen).
+        inboundDepartureLocal:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          description: Hora local de salida de la vuelta (en el destino).
+        weekdays:
+          type: array
+          minItems: 1
+          maxItems: 7
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/WeekdayCode'
+        aircraftType:
+          $ref: '#/components/schemas/AircraftType'
+        aircraft:
+          type: array
+          minItems: 1
+          maxItems: 7
+          uniqueItems: true
+          description: |
+            Opcional. Matrículas de aviones de la flota que operarán la ruta (mismo tipo y con base en el origen). Si no
+            alcanzan para los días elegidos responde 422 con cuántos hacen falta. Si se omite, se asignan solos.
+          items:
+            type: string
+            pattern: '^HC-[A-Z0-9]{2,6}$'
+            example: HC-N57
+    WeekdayCode:
+      type: string
+      enum: [SUN, MON, TUE, WED, THU, FRI, SAT]
+    AircraftType:
+      type: string
+      enum: [Airbus A220-300, Airbus A320neo, Boeing 787-9]
+      description: Si se omite, el que corresponde a la distancia (A220 < 1 500 km, A320neo < 4 500 km, 787-9).
+    RouteLeg:
+      type: object
+      required: [flightNumber, origin, destination, departureLocal, arrivalLocal, arrivalDayOffset]
+      properties:
+        flightNumber:
+          type: string
+          example: EA300
+        origin:
+          type: string
+        destination:
+          type: string
+        departureLocal:
+          type: string
+          example: '07:00'
+        arrivalLocal:
+          type: string
+          example: '07:45'
+        arrivalDayOffset:
+          type: integer
+          description: Días después de la salida en que llega (0 = mismo día).
+    ScheduledRoute:
+      type: object
+      required: [routeId, origin, destination, outbound, inbound, weekdays, aircraftType, aircraft, distanceKm, durationMinutes, customerSeats, source, createdAt, updatedAt]
+      properties:
+        routeId:
+          type: string
+          example: EA300-EA301
+        origin:
+          type: string
+        destination:
+          type: string
+        outbound:
+          $ref: '#/components/schemas/RouteLeg'
+        inbound:
+          $ref: '#/components/schemas/RouteLeg'
+        weekdays:
+          type: array
+          items:
+            $ref: '#/components/schemas/WeekdayCode'
+        aircraftType:
+          $ref: '#/components/schemas/AircraftType'
+        aircraft:
+          type: array
+          description: Matrículas de los aviones dedicados a la ruta.
+          items:
+            type: string
+            example: HC-J27
+        distanceKm:
+          type: integer
+        durationMinutes:
+          type: integer
+        customerSeats:
+          type: integer
+          description: Cupos vendidos o retenidos de hoy en adelante. Con cupos, la ruta no se puede editar ni dar de baja.
+        source:
+          type: string
+          enum: [NETWORK, ADMIN]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    EventDelivery:
+      type: object
+      required: [consumer, target, outcome]
+      properties:
+        consumer:
+          type: string
+          example: webhooks
+        target:
+          type: string
+          description: Suscripción destino (`webhook <id>`).
+        outcome:
+          type: string
+          enum: [DELIVERED, FAILED, SIMULATED]
+        httpStatus:
+          type: integer
+        attempts:
+          type: integer
+        detail:
+          type: string
+    DomainEvent:
+      type: object
+      required: [eventId, eventType, occurredAt, apiVersion, data, deliveries]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+          enum: [booking.confirmed, booking.failed, booking.changed, booking.cancelled, booking.baggage_added, hold.expired, flight.schedule_changed, flight.cancelled, booking.ticket_issuing, booking.ticket_issued, booking.ticket_failed, booking.checked_in]
+        occurredAt:
+          type: string
+          format: date-time
+        apiVersion:
+          type: string
+          example: 1.5.0.0
+        data:
+          type: object
+          additionalProperties: true
+          description: Campos del `WebhookPayload.data` del contrato (bookingId, pnr, status, refundAmount) más los propios del evento.
+        deliveries:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventDelivery'
+    AircraftRequest:
+      type: object
+      additionalProperties: false
+      required: [aircraftType, base]
+      properties:
+        aircraftType:
+          $ref: '#/components/schemas/AircraftType'
+        base:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          description: Aeropuerto donde el avión empieza y termina su semana.
+    UpdateAircraftRequest:
+      type: object
+      additionalProperties: false
+      required: [base]
+      properties:
+        base:
+          type: string
+          pattern: '^[A-Z]{3}$'
+    Aircraft:
+      type: object
+      required: [registration, aircraftType, base, status, routes, totalSeats, source, createdAt, updatedAt]
+      properties:
+        registration:
+          type: string
+          example: HC-N57
+        aircraftType:
+          $ref: '#/components/schemas/AircraftType'
+        base:
+          type: string
+        status:
+          type: string
+          enum: [IN_SERVICE, AVAILABLE]
+        routes:
+          type: array
+          items:
+            type: string
+            example: EA300-EA301
+        totalSeats:
+          type: integer
+        source:
+          type: string
+          enum: [NETWORK, ADMIN]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    AircraftTypeInfo:
+      type: object
+      required: [aircraftType, registrationPrefix, seats, totalSeats, maxRouteKm, turnaroundMinutes, inFleet]
+      properties:
+        aircraftType:
+          $ref: '#/components/schemas/AircraftType'
+        registrationPrefix:
+          type: string
+          example: HC-N
+        seats:
+          type: array
+          items:
+            type: object
+            properties:
+              cabinClass:
+                type: string
+              seats:
+                type: integer
+        totalSeats:
+          type: integer
+        maxRouteKm:
+          type: integer
+          nullable: true
+          description: Distancia máxima de ruta (null = sin límite en la red).
+        turnaroundMinutes:
+          type: integer
+        inFleet:
+          type: integer

@@ -4,11 +4,14 @@ import { getObservability, type ObservabilitySnapshot } from '../../api/extensio
 import { useAuth } from '../../auth/AuthContext';
 import { ProblemAlert } from '../../components/ProblemAlert';
 import { formatDateTime } from '../../lib/format';
+import { EventsPanel } from './EventsPanel';
+import { FleetSchedulePanel } from './FleetSchedulePanel';
 import { browserObservability, type BrowserSnapshot, type ObservabilityEvent } from '../../lib/observability';
 
 /**
  * Panel de observabilidad (solo administradores), basado en el de Ejemplo 1:
  * - **Backend:** métricas HTTP de la API (`GET /admin/observability`, extensión fuera del contrato).
+ * - **Flota:** horario de cada avión por día (`GET /admin/fleet-schedule`).
  * - **Navegador:** rendimiento, errores, recursos, interacciones y entorno, guardados solo en este navegador.
  */
 export function AdminObservabilityPage() {
@@ -135,6 +138,10 @@ export function AdminObservabilityPage() {
       ) : (
         !error && <p className="muted">Cargando métricas del backend…</p>
       )}
+
+      <EventsPanel />
+
+      <FleetSchedulePanel />
 
       <h2>Navegador (este equipo)</h2>
       <section className="stats-grid" aria-label="Resumen del navegador">

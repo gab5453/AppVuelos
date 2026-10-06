@@ -2,7 +2,7 @@ import { useId, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { PassengerBreakdown } from '../api/types';
 import { AIRPORTS } from '../data/airports';
-import { todayIso } from '../lib/format';
+import { lastSaleDate, todayIso } from '../lib/format';
 import { toQuery, type TripType } from '../lib/search-params';
 
 interface Leg {
@@ -67,18 +67,22 @@ function BookingForm({ initialDestination }: { initialDestination?: string }) {
   const navigate = useNavigate();
   const id = useId();
   const [tripType, setTripType] = useState<TripType>('ROUND_TRIP');
-  const [legs, setLegs] = useState<Leg[]>([{ origin: 'UIO', destination: initialDestination ?? 'BOG', date: todayIso(7) }]);
-  const [returnDate, setReturnDate] = useState(todayIso(14));
+  const [legs, setLegs] = useState<Leg[]>([{ origin: 'UIO', destination: initialDestination ?? 'BOG', date: todayIso() }]);
+  // Por defecto se viaja hoy (quien tiene prisa no necesita elegir la fecha) y se vuelve en una semana.
+  const [returnDate, setReturnDate] = useState(todayIso(7));
   const [passengers, setPassengers] = useState<Required<PassengerBreakdown>>({ adults: 1, youths: 0, children: 0, infants: 0 });
   const [error, setError] = useState<string>();
 
-  const updateLeg = (index: number, patch: Partial<Leg>) =>
+  const updateLeg = (index: number, patch: Partial<Leg>) => {
     setLegs((current) => current.map((leg, position) => (position === index ? { ...leg, ...patch } : leg)));
+    // Si la ida pasa a ser posterior a la vuelta, la vuelta se mueve al mismo día.
+    if (index === 0 && patch.date && patch.date > returnDate) setReturnDate(patch.date);
+  };
 
   const changeTripType = (type: TripType) => {
     setTripType(type);
     if (type !== 'MULTI_CITY') setLegs((current) => current.slice(0, 1));
-    else if (legs.length === 1) setLegs((current) => [...current, { origin: current[0]!.destination, destination: 'LIM', date: todayIso(14) }]);
+    else if (legs.length === 1) setLegs((current) => [...current, { origin: current[0]!.destination, destination: 'LIM', date: todayIso(7) }]);
   };
 
   const submit = (event: FormEvent) => {
@@ -90,6 +94,9 @@ function BookingForm({ initialDestination }: { initialDestination?: string }) {
 
     if (itineraries.some((leg) => leg.origin === leg.destination)) return setError('El origen y el destino deben ser distintos.');
     if (itineraries.some((leg) => !leg.departureDate || leg.departureDate < todayIso())) return setError('Las fechas no pueden estar en el pasado.');
+    if (itineraries.some((leg) => leg.departureDate > lastSaleDate())) {
+      return setError(`Tenemos vuelos publicados hasta el ${lastSaleDate()} (las próximas 13 semanas).`);
+    }
     if (itineraries.some((leg, index) => index > 0 && leg.departureDate < itineraries[index - 1]!.departureDate)) {
       return setError('Cada tramo debe salir en la misma fecha o después del anterior.');
     }
@@ -132,12 +139,12 @@ function BookingForm({ initialDestination }: { initialDestination?: string }) {
           <AirportSelect id={`${id}-d${index}`} label="Destino" value={leg.destination} onChange={(destination) => updateLeg(index, { destination })} />
           <div className="field">
             <label htmlFor={`${id}-date${index}`}>{tripType === 'ROUND_TRIP' ? 'Ida' : 'Fecha'}</label>
-            <input id={`${id}-date${index}`} type="date" min={todayIso()} value={leg.date} required onChange={(event) => updateLeg(index, { date: event.target.value })} />
+            <input id={`${id}-date${index}`} type="date" min={todayIso()} max={lastSaleDate()} value={leg.date} required onChange={(event) => updateLeg(index, { date: event.target.value })} />
           </div>
           {tripType === 'ROUND_TRIP' && (
             <div className="field">
               <label htmlFor={`${id}-return`}>Vuelta</label>
-              <input id={`${id}-return`} type="date" min={leg.date} value={returnDate} required onChange={(event) => setReturnDate(event.target.value)} />
+              <input id={`${id}-return`} type="date" min={leg.date} max={lastSaleDate()} value={returnDate} required onChange={(event) => setReturnDate(event.target.value)} />
             </div>
           )}
           {tripType === 'MULTI_CITY' && legs.length > 2 && (
@@ -240,7 +247,7 @@ function StatusForm() {
     >
       <div className="field">
         <label htmlFor={`${id}-flight`}>Número de vuelo</label>
-        <input id={`${id}-flight`} placeholder="EA300" value={flightNumber} required maxLength={8} onChange={(event) => setFlightNumber(event.target.value)} />
+        <input id={`${id}-flight`} placeholder="EA104" value={flightNumber} required maxLength={8} onChange={(event) => setFlightNumber(event.target.value)} />
       </div>
       <div className="field">
         <label htmlFor={`${id}-date`}>Fecha</label>

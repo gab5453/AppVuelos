@@ -2,8 +2,12 @@ import { Body, Controller, Get, Param, Put, Query, UseGuards } from '@nestjs/com
 import type { PassengerItem } from '@ecoairlines/data-access/common/contract/common.types.js';
 import {
   AdminFlightQueryDto,
+  AdminFlightsQueryDto,
   UpdateFlightStatusRequestDto,
   type AdminDashboardStatsDto,
+  type DomainEventDto,
+  type FlightOccupancyDto,
+  type FleetScheduleDto,
 } from '@ecoairlines/business/dto/admin/admin.dto.js';
 import type { FlightStatusDto } from '@ecoairlines/business/dto/flight-status/flight-status.dto.js';
 import { AdminService } from '@ecoairlines/business/services/admin/admin.service.js';
@@ -29,6 +33,24 @@ export class AdminController {
   @Get('dashboard-stats')
   getDashboardStats(): Promise<AdminDashboardStatsDto> {
     return this.adminService.getDashboardStats();
+  }
+
+  /** Ocupación de los vuelos por fecha (por defecto hoy), aeropuerto de origen o ruta. */
+  @Get('flights')
+  getFlights(@Query() query: AdminFlightsQueryDto): Promise<FlightOccupancyDto[]> {
+    return this.adminService.getFlights(query);
+  }
+
+  /** Horario de la flota (qué vuelos opera cada avión) en una fecha; por defecto hoy. */
+  @Get('fleet-schedule')
+  getFleetSchedule(@Query() query: AdminFlightQueryDto): Promise<FleetScheduleDto> {
+    return this.adminService.getFleetSchedule(query.date);
+  }
+
+  /** Últimos eventos de dominio publicados (booking.*, flight.*) y su entrega por webhook. */
+  @Get('events')
+  getRecentEvents(): DomainEventDto[] {
+    return this.adminService.getRecentEvents();
   }
 
   @Put('flights/:flightNumber/status')

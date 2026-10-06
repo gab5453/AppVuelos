@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { DomainEventBus } from '../../common/events/domain-event-bus.js';
 import type { MoneyAmount } from '@ecoairlines/data-access/common/contract/common.types.js';
 import { scaleMoney } from '@ecoairlines/data-access/common/money.js';
 import { paymentProblem } from '../../common/payments/payment-problem.js';
@@ -25,6 +26,7 @@ export class BaggageService {
     @Inject(POST_SALE_GDS_GATEWAY) private readonly gds: PostSaleGdsGateway,
     @Inject(POST_SALE_PAYMENT_GATEWAY) private readonly payments: PostSalePaymentGateway,
     private readonly tasks: DeferredTaskRunner,
+    private readonly events: DomainEventBus,
   ) {}
 
   /** Una opción por pasajero con asiento e itinerario aún no despegado. Los infantes no llevan equipaje facturado propio. */
@@ -98,13 +100,19 @@ export class BaggageService {
     };
   }
 
-  private record(bookingId: string, request: AddBaggageRequestDto, amount: MoneyAmount): Promise<BookingSnapshot> {
-    return this.bookings.recordBaggagePurchase(bookingId, {
+  private async record(bookingId: string, request: AddBaggageRequestDto, amount: MoneyAmount): Promise<BookingSnapshot> {
+    const updated = await this.bookings.recordBaggagePurchase(bookingId, {
       passengerId: request.passengerId,
       itineraryId: request.itineraryId,
       quantity: request.quantity,
       amount,
     });
+    this.events.publishBooking('booking.baggage_added', await this.bookings.eventSubject(bookingId), {
+      passengerId: request.passengerId,
+      itineraryId: request.itineraryId,
+      quantity: request.quantity,
+    });
+    return updated;
   }
 }
 

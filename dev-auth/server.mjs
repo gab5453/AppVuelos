@@ -23,7 +23,8 @@ const SECRET = process.env.AUTH_JWT_SECRET ?? 'vuelos-dev-only-secret-do-not-use
 const ISSUER = process.env.AUTH_ISSUER ?? 'vuelos-dev-auth';
 const AUDIENCE = process.env.AUTH_AUDIENCE ?? 'vuelos-api';
 const PORT = Number(process.env.PORT ?? 4000);
-const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? 'http://localhost:5173').split(',').map((origin) => origin.trim());
+// Por defecto: la web (5173) y el Swagger de la API (3000), que puede llamar a /login y /register (dev-auth/openapi.yaml).
+const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://localhost:3000').split(',').map((origin) => origin.trim());
 const TOKEN_TTL_SECONDS = 3600;
 /**
  * Un cliente final no gestiona webhooks (flights:webhooks es para integraciones B2B). `ecoairlines:profile` es un
@@ -50,7 +51,10 @@ function addUser(name, email, password, role = 'CUSTOMER') {
   return user;
 }
 
+// Tres clientes de prueba (solo desarrollo), para probar reservas, asientos y aislamiento entre clientes.
 addUser('Usuario Demo', 'demo@ecoairlines.test', 'EcoDemo2026');
+addUser('María Torres', 'maria@ecoairlines.test', 'EcoMaria2026');
+addUser('Luis Andrade', 'luis@ecoairlines.test', 'EcoLuis2026');
 // Solo desarrollo. Las cuentas creadas con /register son siempre CUSTOMER: nadie puede registrarse como ADMIN.
 addUser('Administrador de Operaciones EcoAirlines', 'admin@ecoairlines.test', 'EcoAdmin2026', 'ADMIN');
 
@@ -174,5 +178,5 @@ async function handle(req, res) {
 createServer((req, res) => {
   handle(req, res).catch(() => problem(res, 500, 'Internal Server Error'));
 }).listen(PORT, () => {
-  console.log(`dev-auth escuchando en http://localhost:${PORT} (solo desarrollo). Usuario demo: demo@ecoairlines.test / EcoDemo2026; administrador: admin@ecoairlines.test / EcoAdmin2026`);
+  console.log(`dev-auth escuchando en http://localhost:${PORT} (solo desarrollo). Clientes: demo@ecoairlines.test / EcoDemo2026, maria@ecoairlines.test / EcoMaria2026, luis@ecoairlines.test / EcoLuis2026; administrador: admin@ecoairlines.test / EcoAdmin2026`);
 });

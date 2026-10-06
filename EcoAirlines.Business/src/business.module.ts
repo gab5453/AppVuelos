@@ -1,7 +1,11 @@
 import { Module } from '@nestjs/common';
 import { DataManagementModule } from '@ecoairlines/data-management/data-management.module.js';
+import { DomainEventBus } from './common/events/domain-event-bus.js';
 import { DeferredTaskRunner } from './common/scheduling/deferred-task-runner.js';
 import { WEBHOOK_URL_POLICY, WebhookUrlPolicy } from './rules/webhooks/webhook-url-policy.js';
+import { AdminFleetService } from './services/admin/admin-fleet.service.js';
+import { AdminRoutesService } from './services/admin/admin-routes.service.js';
+import { SchedulePublisher } from './services/admin/schedule-publisher.js';
 import { AdminService } from './services/admin/admin.service.js';
 import { BookingsFacade } from './services/bookings/bookings.facade.js';
 import { BookingsService } from './services/bookings/bookings.service.js';
@@ -16,6 +20,7 @@ import { BaggageService } from './services/post-sale/baggage.service.js';
 import { CancellationService } from './services/post-sale/cancellation.service.js';
 import { DateChangeService } from './services/post-sale/date-change.service.js';
 import { CatalogService } from './services/search/catalog.service.js';
+import { WebhookDeliveryService } from './services/webhooks/webhook-delivery.service.js';
 import { WebhooksService } from './services/webhooks/webhooks.service.js';
 
 /** Services que usa EcoAirlines.API (sus controllers y el guard de propiedad de reservas). */
@@ -34,6 +39,10 @@ const SERVICES = [
   SeatChangeService,
   CustomerProfileService,
   AdminService,
+  AdminRoutesService,
+  AdminFleetService,
+  // eventos (SOA/EDA): bus interno; WebhookDeliveryService se suscribe al iniciar
+  DomainEventBus,
 ];
 
 /**
@@ -51,6 +60,8 @@ const SERVICES = [
   providers: [
     ...SERVICES,
     DeferredTaskRunner,
+    WebhookDeliveryService,
+    SchedulePublisher,
     { provide: HOLD_GATEWAY_PORT, useClass: OffersHoldGatewayAdapter },
     {
       provide: WEBHOOK_URL_POLICY,

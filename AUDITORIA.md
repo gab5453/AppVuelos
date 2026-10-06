@@ -1,5 +1,19 @@
 # Auditoría del proyecto Vuelos
 
+> **Documento histórico.** Es la auditoría de Gemini sobre la **primera versión** (estructura `src/modules/...`, un solo
+> proyecto). Las rutas de archivos que cita ya no existen: desde V1.C la API está en 4 capas (`EcoAirlines.API`, `.Business`,
+> `.DataManagement`, `.DataAccess`). Estado de cada hallazgo:
+>
+> | Hallazgo | Resolución |
+> |----------|------------|
+> | CRITICAL — acoplamiento entre dominios | ✅ Corregido (V1.A/V1.C): post-sale, check-in y admin usan solo `BookingsFacade`; cada dominio tiene su contexto de datos y `test/architecture.spec.ts` lo verifica |
+> | HIGH — servicios que devuelven códigos HTTP | ⏳ Pendiente: propuesto como V1.B en `CAMBIOS.md` (los servicios aún devuelven `statusCode` 201 o 202) |
+> | MEDIUM — `404` no documentado en postventa | 📋 Registrado como HALL-11 en `HALLAZGOS.md`: requiere cambiar el contrato, lo decide el líder de booking |
+> | LOW — `202` de `/cancel` nunca producido | 📋 Registrado en `HALLAZGOS.md` (sección 7) y en la prueba de conformidad (`NOT_PRODUCIBLE`) |
+> | LOW — `/cancel` sin `ForbidUnknownPropertiesGuard` | ⏳ Pendiente de decisión (nota de V1.B en `CAMBIOS.md`) |
+>
+> La arquitectura vigente está en [`ARQUITECTURA.md`](ARQUITECTURA.md). La próxima auditoría debe hacerse sobre esta versión.
+
 ## CRITICAL
 
 ### Dependencia circular / Acoplamiento fuerte entre dominios

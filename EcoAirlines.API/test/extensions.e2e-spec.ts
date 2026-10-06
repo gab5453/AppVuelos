@@ -109,7 +109,7 @@ describe('Extensiones fuera del contrato (V1.D) (e2e)', () => {
     it('un vuelo inexistente responde 404 y una fecha inválida 400', async () => {
       const missing = await http().get('/admin/flights/EA999/passengers').set('Authorization', admin).expect(404);
       expectExtension('get', '/admin/flights/{flightNumber}/passengers', missing);
-      const invalid = await http().get('/admin/flights/EA300/passengers').query({ date: '2026-02-31' }).set('Authorization', admin).expect(400);
+      const invalid = await http().get('/admin/flights/EA104/passengers').query({ date: '2026-02-31' }).set('Authorization', admin).expect(400);
       expectExtension('get', '/admin/flights/{flightNumber}/passengers', invalid);
     });
   });
@@ -118,7 +118,7 @@ describe('Extensiones fuera del contrato (V1.D) (e2e)', () => {
     it('el estado que fija el administrador lo devuelve GET /flights/{flightNumber}/status del contrato', async () => {
       const date = localDateInDays(3);
       const updated = await http()
-        .put('/admin/flights/EA300/status')
+        .put('/admin/flights/EA104/status')
         .query({ date })
         .set('Authorization', admin)
         .send({ status: 'CANCELLED' })
@@ -126,24 +126,89 @@ describe('Extensiones fuera del contrato (V1.D) (e2e)', () => {
       expectExtension('put', '/admin/flights/{flightNumber}/status', updated);
       expect(updated.body.status).toBe('CANCELLED');
 
-      const status = await http().get('/flights/EA300/status').query({ date }).expect(200);
+      const status = await http().get('/flights/EA104/status').query({ date }).expect(200);
       expectContract('get', '/flights/{flightNumber}/status', status);
       expect(status.body.status).toBe('CANCELLED');
     });
 
     it('DEPARTED registra la hora real de salida', async () => {
       const date = localDateInDays(4);
-      const { body } = await http().put('/admin/flights/EA302/status').query({ date }).set('Authorization', admin).send({ status: 'DEPARTED' }).expect(200);
+      const { body } = await http().put('/admin/flights/EA105/status').query({ date }).set('Authorization', admin).send({ status: 'DEPARTED' }).expect(200);
       expect(body.status).toBe('DEPARTED');
       expect(body.departure.actualAt).toEqual(expect.any(String));
     });
 
     it('rechaza estados fuera del enum, propiedades extra y vuelos inexistentes', async () => {
-      const badStatus = await http().put('/admin/flights/EA300/status').set('Authorization', admin).send({ status: 'FLYING' }).expect(400);
+      const badStatus = await http().put('/admin/flights/EA104/status').set('Authorization', admin).send({ status: 'FLYING' }).expect(400);
       expectExtension('put', '/admin/flights/{flightNumber}/status', badStatus);
-      await http().put('/admin/flights/EA300/status').set('Authorization', admin).send({ status: 'DELAYED', reason: 'x' }).expect(400);
+      await http().put('/admin/flights/EA104/status').set('Authorization', admin).send({ status: 'DELAYED', reason: 'x' }).expect(400);
       const missing = await http().put('/admin/flights/EA999/status').set('Authorization', admin).send({ status: 'DELAYED' }).expect(404);
       expectExtension('put', '/admin/flights/{flightNumber}/status', missing);
+    });
+  });
+
+  describe('vuelos por fecha, origen y ruta', () => {
+    it('por defecto muestra los vuelos de hoy, con cupos de clientes y simulados', async () => {
+      const response = await http().get('/admin/flights').set('Authorization', admin).expect(200);
+      expectExtension('get', '/admin/flights', response);
+      const flights = response.body as { date: string; bookedSeats: number; reservedSeats: number; simulatedSeats: number }[];
+      expect(flights).toHaveLength(180);
+      expect(new Set(flights.map((flight) => flight.date))).toEqual(new Set([localDateInDays(0)]));
+      for (const flight of flights) expect(flight.bookedSeats).toBe(flight.reservedSeats + flight.simulatedSeats);
+    });
+
+    it('filtra por origen y por ruta, y refleja las reservas de un día futuro', async () => {
+      const days = 40;
+      const date = localDateInDays(days);
+      const { booking } = await createBooking(app, 'flights-user', { origin: 'GYE', destination: 'CUE', days });
+      const flightNumber = booking.itineraries[0].segments[0].flightNumber as string;
+
+      const fromGye = await http().get('/admin/flights').query({ date, origin: 'GYE' }).set('Authorization', admin).expect(200);
+      expectExtension('get', '/admin/flights', fromGye);
+      expect(fromGye.body).toHaveLength(18);
+      expect(fromGye.body.every((flight: { route: string }) => flight.route.startsWith('GYE'))).toBe(true);
+
+      const route = await http().get('/admin/flights').query({ date, origin: 'GYE', destination: 'CUE' }).set('Authorization', admin).expect(200);
+      expect(route.body).toHaveLength(2);
+      const booked = route.body.find((flight: { flightNumber: string }) => flight.flightNumber === flightNumber);
+      expect(booked).toMatchObject({ date, reservedSeats: 1, simulatedSeats: 0, bookedSeats: 1 });
+    });
+
+    it('valida los filtros y no publica fechas más allá de los 91 días', async () => {
+      expectExtension('get', '/admin/flights', await http().get('/admin/flights').query({ origin: 'quito' }).set('Authorization', admin).expect(400));
+      expectExtension('get', '/admin/flights', await http().get('/admin/flights').query({ date: localDateInDays(120) }).set('Authorization', admin).expect(400));
+      await http().get('/admin/flights').set('Authorization', await bearer('customer-1', CUSTOMER)).expect(403);
+    });
+  });
+
+  describe('horario de la flota', () => {
+    it('cada avión tiene vuelos encadenados (sale de donde llegó) y ninguno vuela dos a la vez', async () => {
+      const date = localDateInDays(10);
+      const response = await http().get('/admin/fleet-schedule').query({ date }).set('Authorization', admin).expect(200);
+      expectExtension('get', '/admin/fleet-schedule', response);
+      const schedule = response.body as {
+        totalFlights: number;
+        salesWindow: { days: number };
+        aircraft: { registration: string; flights: { origin: string; destination: string; departure: string; arrival: string }[] }[];
+      };
+      expect(schedule.salesWindow.days).toBe(91);
+      expect(schedule.totalFlights).toBe(180);
+      expect(schedule.aircraft.flatMap((aircraft) => aircraft.flights)).toHaveLength(180);
+      for (const aircraft of schedule.aircraft) {
+        aircraft.flights.forEach((flight, index) => {
+          const previous = aircraft.flights[index - 1];
+          if (!previous) return;
+          expect(flight.origin, aircraft.registration).toBe(previous.destination);
+          expect(Date.parse(flight.departure)).toBeGreaterThan(Date.parse(previous.arrival));
+        });
+      }
+    });
+
+    it('exige administrador y no publica fechas más allá de los 91 días', async () => {
+      await http().get('/admin/fleet-schedule').expect(401);
+      await http().get('/admin/fleet-schedule').set('Authorization', await bearer('customer-1', CUSTOMER)).expect(403);
+      const beyond = await http().get('/admin/fleet-schedule').query({ date: localDateInDays(120) }).set('Authorization', admin).expect(400);
+      expectExtension('get', '/admin/fleet-schedule', beyond);
     });
   });
 
@@ -213,8 +278,10 @@ describe('Extensiones fuera del contrato (V1.D) (e2e)', () => {
       });
       const segmentId = offer.itineraries[0].segments[0].segmentId as string;
       const auth = await bearer('seat-rules', CUSTOMER);
-      const map = seatsInMap((await http().get(`/offers/${offer.offerId}/seatmap`).query({ segmentId }).expect(200)).body, 'ECONOMY');
-      const taken = [...map].find(([, available]) => !available)![0];
+      // Otro cliente reserva el mismo vuelo y ocupa un asiento (los vuelos lejanos empiezan vacíos: sin pasajeros simulados).
+      const other = await createBooking(app, 'seat-rival', { origin: 'UIO', destination: 'BOG', days: 27 });
+      const taken = await freeSeat(offer.offerId, segmentId);
+      await http().put(`/bookings/${other.bookingId}/seat`).set('Authorization', await bearer('seat-rival', CUSTOMER)).send({ newSeatNumber: taken }).expect(200);
 
       const occupied = await http().put(`/bookings/${bookingId}/seat`).set('Authorization', auth).send({ passengerId: 'a1', newSeatNumber: taken }).expect(409);
       expectExtension('put', '/bookings/{bookingId}/seat', occupied);

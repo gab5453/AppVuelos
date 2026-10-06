@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { DomainEventBus } from '../../common/events/domain-event-bus.js';
 import { randomUUID } from 'node:crypto';
 import { formatCents, toCents } from '@ecoairlines/data-access/common/money.js';
 import { seatsRequired } from '@ecoairlines/data-access/common/passenger-counts.js';
@@ -32,6 +33,7 @@ export class CancellationService {
     private readonly bookings: BookingsFacade,
     @Inject(POST_SALE_GDS_GATEWAY) private readonly gds: PostSaleGdsGateway,
     @Inject(CANCELLATION_QUOTE_REPOSITORY) private readonly quotes: QuoteRepository<CancellationQuotePayload>,
+    private readonly events: DomainEventBus,
   ) {}
 
   async getQuote(booking: BookingSnapshot): Promise<CancellationQuoteResponseDto> {
@@ -104,6 +106,9 @@ export class CancellationService {
       description:
         `Reserva cancelada (cotización ${quote.id}). Reembolso: ${formatCents(quote.payload.refundCents)} ${booking.grandTotal.currency}; ` +
         `penalidad: ${formatCents(quote.payload.penaltyCents)}.${request.reason ? ` Motivo: ${request.reason}` : ''}`,
+    });
+    this.events.publishBooking('booking.cancelled', await this.bookings.eventSubject(booking.bookingId), {
+      refundAmount: formatCents(quote.payload.refundCents),
     });
   }
 }

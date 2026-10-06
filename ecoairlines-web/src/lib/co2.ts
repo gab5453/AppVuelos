@@ -14,7 +14,8 @@ const KG_PER_PASSENGER_KM: Record<string, number> = {
 /** Absorción anual aproximada de un árbol, para traducir kg a algo tangible. */
 const KG_PER_TREE_YEAR = 21;
 
-function distanceKm(from: string, to: string): number {
+/** Distancia ortodrómica entre dos aeropuertos de la red (km). */
+export function distanceKm(from: string, to: string): number {
   const a = airportByCode(from);
   const b = airportByCode(to);
   if (!a || !b) return 0;

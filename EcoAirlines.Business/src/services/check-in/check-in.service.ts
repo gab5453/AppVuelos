@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { DomainEventBus } from '../../common/events/domain-event-bus.js';
 import { stableHash } from '@ecoairlines/data-access/common/stable-hash.js';
 import { ProblemDetailsException } from '../../exceptions/problem-details.exception.js';
 import { seatHolder } from '../../common/seating/seat-assigner.js';
@@ -30,6 +31,7 @@ export class CheckInService {
     private readonly bookings: BookingsFacade,
     @Inject(CHECK_IN_REPOSITORY) private readonly checkIns: CheckInRepository,
     @Inject(DEPARTURE_CONTROL_GATEWAY) private readonly departureControl: DepartureControlGateway,
+    private readonly events: DomainEventBus,
   ) {}
 
   /** Apertura de la ventana, configurable con CHECK_IN_WINDOW_HOURS (por defecto 48 h). */
@@ -90,11 +92,11 @@ export class CheckInService {
     await this.checkIns.save(booking.bookingId, checkIns);
     await this.bookings.recordSeatAssignments(booking.bookingId, newSeats, `Check-in del itinerario ${fare.itineraryId}.`);
 
-    return {
-      bookingId: booking.bookingId,
-      status: results.every((result) => result.status === 'CHECKED_IN') ? 'COMPLETED' : 'FAILED',
-      checkedInPassengers: results,
-    };
+    const status = results.every((result) => result.status === 'CHECKED_IN') ? 'COMPLETED' : 'FAILED';
+    if (status === 'COMPLETED') {
+      this.events.publishBooking('booking.checked_in', await this.bookings.eventSubject(booking.bookingId), { itineraryId: fare.itineraryId, passengers: results.length });
+    }
+    return { bookingId: booking.bookingId, status, checkedInPassengers: results };
   }
 
   /** Pases de los segmentos ACTUALES de la reserva: un check-in de un vuelo reemplazado por un cambio de fecha no cuenta. */

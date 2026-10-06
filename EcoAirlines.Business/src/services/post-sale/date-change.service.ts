@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { DomainEventBus } from '../../common/events/domain-event-bus.js';
 import { randomUUID } from 'node:crypto';
 import type { BookingDetail } from '@ecoairlines/data-access/common/contract/booking.types.js';
 import { formatCents, moneyFromCents, toCents } from '@ecoairlines/data-access/common/money.js';
@@ -55,6 +56,7 @@ export class DateChangeService {
     @Inject(POST_SALE_PAYMENT_GATEWAY) private readonly payments: PostSalePaymentGateway,
     @Inject(DATE_CHANGE_OFFER_REPOSITORY) private readonly offers: QuoteRepository<DateChangeOfferPayload>,
     private readonly tasks: DeferredTaskRunner,
+    private readonly events: DomainEventBus,
   ) {
     this.seats = new SeatAssigner(gds);
   }
@@ -188,7 +190,7 @@ export class DateChangeService {
       }
     }
 
-    return this.bookings.applyItineraryChange(booking.bookingId, {
+    const updated = await this.bookings.applyItineraryChange(booking.bookingId, {
       replacements: payload.replacements.map((replacement) => ({
         oldItineraryId: replacement.oldItineraryId,
         itineraryId: replacement.next.itineraryId,
@@ -202,6 +204,11 @@ export class DateChangeService {
         .map((replacement) => `${replacement.oldItineraryId} → ${replacement.next.itineraryId}`)
         .join(', ')} (${formatCents(payload.totalToPayCents)} USD).`,
     });
+    this.events.publishBooking('booking.changed', await this.bookings.eventSubject(booking.bookingId), {
+      reason: 'DATE_CHANGE',
+      itineraryIds: payload.replacements.map((replacement) => replacement.next.itineraryId),
+    });
+    return updated;
   }
 
   private async assertChangeable(fare: PurchasedFare): Promise<void> {

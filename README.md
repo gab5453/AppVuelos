@@ -26,7 +26,11 @@ EcoAirlines.API  →  EcoAirlines.Business  →  EcoAirlines.DataManagement  →
 | [`dev-auth/`](dev-auth) | Servidor de **autenticación de desarrollo**: emite los JWT que verifica la API (sin dependencias) |
 | [`CAMBIOS.md`](CAMBIOS.md) | Plan por fases, aprobado antes de implementar, con el resultado y las desviaciones de cada fase |
 | [`HALLAZGOS.md`](HALLAZGOS.md) | Hallazgos verificados: entorno local, despliegue en la nube, plantilla del booking y contrato |
-| [`AUDITORIA.md`](AUDITORIA.md) | Auditoría técnica de Gemini |
+| [`ARQUITECTURA.md`](ARQUITECTURA.md) | **Arquitectura**: componentes, capas, flujo de compra y modelo de datos (diagramas Mermaid) |
+| [`EVENTOS.md`](EVENTOS.md) | **Eventos (SOA/EDA)**: catálogo, bus interno, webhooks firmados y evolución hacia un broker |
+| [`PRUEBASSW.md`](PRUEBASSW.md) | Guía de pruebas manuales en Swagger, incluidos los errores 400–429 |
+| [`CRITERIOS.md`](CRITERIOS.md) | Estado frente a la rúbrica de evaluación y descripción de cada parte para la defensa |
+| [`AUDITORIA.md`](AUDITORIA.md) | Auditoría técnica de Gemini sobre la primera versión (histórica) |
 | [`CLAUDE.md`](CLAUDE.md) / [`GEMINI.md`](GEMINI.md) | Reglas del programador (Claude) y del auditor (Gemini) |
 
 ## Requisitos
@@ -53,7 +57,7 @@ npm install
 npm run dev
 ```
 
-Abrir **http://localhost:5173** (con `localhost`, no `127.0.0.1`). Usuarios de prueba: cliente `demo@ecoairlines.test` / `EcoDemo2026`; administrador `admin@ecoairlines.test` / `EcoAdmin2026`
+Abrir **http://localhost:5173** (con `localhost`, no `127.0.0.1`). Usuarios de prueba: clientes `demo@ecoairlines.test` / `EcoDemo2026`, `maria@ecoairlines.test` / `EcoMaria2026` y `luis@ecoairlines.test` / `EcoLuis2026`; administrador `admin@ecoairlines.test` / `EcoAdmin2026`
 (panel de administración y observabilidad en `/admin`).
 
 Para probar en Swagger los endpoints protegidos, generar un token con `npm run token` (en la raíz) y pegarlo en *Authorize* → `DevBearer`.

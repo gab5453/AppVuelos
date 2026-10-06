@@ -6,6 +6,7 @@ import request from 'supertest';
 import { createTestApp } from './helpers/app.js';
 import {
   DEV_SECURITY_SCHEME,
+  DOCS_DEV_AUTH_JSON_PATH,
   DOCS_EXTENSIONS_JSON_PATH,
   DOCS_JSON_PATH,
   DOCS_PATH,
@@ -74,6 +75,13 @@ describe('Swagger / contrato (e2e)', () => {
       app = await createApp(false);
     });
 
+    it('no publica el documento de dev-auth (solo desarrollo)', async () => {
+      const response = await request(app.getHttpServer()).get(DOCS_DEV_AUTH_JSON_PATH);
+      expect(response.body?.paths).toBeUndefined();
+      const init = await request(app.getHttpServer()).get(`${DOCS_PATH}/swagger-ui-init.js`).expect(200);
+      expect(init.text).not.toContain(DOCS_DEV_AUTH_JSON_PATH);
+    });
+
     it(`GET ${DOCS_EXTENSIONS_JSON_PATH} publica el anexo con los schemas del contrato que referencia`, async () => {
       const { body } = await request(app.getHttpServer()).get(DOCS_EXTENSIONS_JSON_PATH).expect(200);
       expect(Object.keys(body.paths)).toContain('/admin/dashboard-stats');
@@ -90,6 +98,16 @@ describe('Swagger / contrato (e2e)', () => {
   describe('con overlay de desarrollo', () => {
     beforeEach(async () => {
       app = await createApp(true);
+    });
+
+    it('publica el documento de dev-auth (otro servicio) apuntando a su URL, y la CSP de /docs permite llamarlo', async () => {
+      const { body } = await request(app.getHttpServer()).get(DOCS_DEV_AUTH_JSON_PATH).expect(200);
+      expect(Object.keys(body.paths).sort()).toEqual(['/health', '/login', '/register']);
+      expect(body.servers).toEqual([{ url: 'http://localhost:4000', description: 'dev-auth (desarrollo)' }]);
+      const docs = await request(app.getHttpServer()).get(`${DOCS_PATH}/`).expect(200);
+      expect(docs.headers['content-security-policy']).toContain("connect-src 'self' http://localhost:4000");
+      const init = await request(app.getHttpServer()).get(`${DOCS_PATH}/swagger-ui-init.js`).expect(200);
+      expect(init.text).toContain(DOCS_DEV_AUTH_JSON_PATH);
     });
 
     it(`GET ${DOCS_PATH}/ sirve Swagger UI`, async () => {

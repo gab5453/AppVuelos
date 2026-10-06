@@ -4,7 +4,7 @@ import { WEBHOOK_EVENTS, type WebhookEvent } from '@ecoairlines/data-access/comm
 export { WEBHOOK_EVENTS, type WebhookEvent } from '@ecoairlines/data-access/common/contract/webhook.types.js';
 
 export class WebhookSubscriptionRequestDto {
-  @IsUrl({ require_tld: false })
+  @IsUrl({ require_tld: false, require_protocol: true, protocols: ['http', 'https'] })
   url!: string;
 
   /** Sin `minItems` en el contrato: una suscripción sin eventos es válida (no recibirá notificaciones). */

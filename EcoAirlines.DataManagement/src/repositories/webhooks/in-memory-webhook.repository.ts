@@ -11,6 +11,12 @@ export class InMemoryWebhookRepository implements WebhookRepository {
     return [...this.db.subscriptions.values()].filter((subscription) => subscription.ownerId === ownerId);
   }
 
+  async findSubscribers(eventType: string, ownerId?: string): Promise<WebhookSubscriptionRecord[]> {
+    return [...this.db.subscriptions.values()].filter(
+      (subscription) => subscription.events.includes(eventType as never) && (ownerId === undefined || subscription.ownerId === ownerId),
+    );
+  }
+
   async create(subscription: WebhookSubscriptionRecord): Promise<WebhookSubscriptionRecord> {
     this.db.subscriptions.set(subscription.id, subscription);
     return subscription;

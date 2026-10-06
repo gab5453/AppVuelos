@@ -21,15 +21,21 @@ import {
   parseSegmentId,
 } from './gds-ids.js';
 import { stableHash } from '../../common/stable-hash.js';
+import { AIRCRAFT, AIRLINE, FARE_BRANDS, TERMINALS, type AircraftType, type FareBrandDefinition } from '../../seed/network.js';
 import {
-  AIRCRAFT,
-  AIRLINE,
-  FARE_BRANDS,
-  SCHEDULE,
-  TERMINALS,
-  type FareBrandDefinition,
+  DEFAULT_TIMETABLE,
+  SALES_WINDOW_DAYS,
+  buildTimetable,
+  findScheduledFlight,
+  flightDurationMinutes,
+  flightsOperatingOn,
+  salesWindow,
+  type FleetAircraft,
+  type RouteDefinition,
   type ScheduledFlight,
-} from '../../seed/network.js';
+  type Timetable,
+} from '../../seed/timetable.js';
+import { fleetPlan } from './fleet-planner.js';
 
 export interface GdsSegment {
   segmentId: string;
@@ -49,6 +55,24 @@ export interface GdsItinerary {
   segments: GdsSegment[];
   totalDurationMinutes: number;
   distanceKm: number;
+}
+
+/** Un vuelo del día en la rotación de un avión. */
+export interface FleetLeg {
+  segmentId: string;
+  flightNumber: string;
+  origin: string;
+  destination: string;
+  /** Hora local con desfase (ISO 8601). */
+  departure: string;
+  arrival: string;
+}
+
+export interface FleetSchedule {
+  date: string;
+  salesWindow: { from: string; to: string; days: number };
+  totalFlights: number;
+  aircraft: { registration: string; aircraftType: AircraftType; base: string; flights: FleetLeg[] }[];
 }
 
 export interface GdsSeat {
@@ -93,6 +117,8 @@ const MAX_OPTIONS_PER_ROUTE = 6;
 const MIN_SALE_LEAD_MINUTES = 60;
 const BOARDING_STARTS_MINUTES = 40;
 const STATUS_WINDOW_DAYS = 370;
+/** Días (desde que arranca la API) en que los vuelos tienen ocupación simulada de demostración. */
+const DEMO_OCCUPANCY_DAYS = 7;
 
 const PASSENGER_FARE_FACTOR: Record<PassengerType, number> = { ADULT: 1, YOUTH: 1, CHILD: 0.75, INFANT: 0.1 };
 
@@ -109,6 +135,11 @@ export class MockGdsService {
   /** Asientos asignados: segmentId → asiento → titular. */
   private readonly assignedSeats = new Map<string, Map<string, string>>();
   private readonly seatLayoutCache = new Map<string, GdsSeat[]>();
+  /** Carga simulada por segmento (0 = vuelo vacío); ver `isPreOccupied`. */
+  private readonly demoLoadFactors = new Map<string, number>();
+  private demoOccupancyUntil?: number;
+  /** Horario publicado (vuelos y aviones). Empieza con la red base y cambia cuando la aerolínea publica sus rutas. */
+  private timetable: Timetable = DEFAULT_TIMETABLE;
 
   /** Reloj reemplazable en pruebas. */
   now: () => number = () => Date.now();
@@ -117,13 +148,13 @@ export class MockGdsService {
 
   resolveSegment(segmentId: string): GdsSegment | undefined {
     const parsed = parseSegmentId(segmentId);
-    const flight = parsed && SCHEDULE.find((candidate) => candidate.flightNumber === parsed.flightNumber);
+    const flight = parsed && findScheduledFlight(this.timetable, parsed.flightNumber, parsed.localDate);
     return parsed && flight ? this.buildSegment(flight, parsed.localDate) : undefined;
   }
 
   /** Itinerarios directos y con una escala para una fecha local de salida, ordenados por paradas y duración. */
   findItineraries(origin: string, destination: string, localDate: string): GdsItinerary[] {
-    if (!AIRPORTS[origin] || !AIRPORTS[destination] || origin === destination) {
+    if (!AIRPORTS[origin] || !AIRPORTS[destination] || origin === destination || !this.inSalesWindow(origin, localDate)) {
       return [];
     }
     const earliestDeparture = this.now() + MIN_SALE_LEAD_MINUTES * 60_000;
@@ -139,7 +170,7 @@ export class MockGdsService {
       const arrivalDate = localDateOf(first.arrivalUtc, hub.utcOffsetMinutes);
       for (const date of [arrivalDate, addDays(arrivalDate, 1)]) {
         for (const second of this.segmentsDeparting(hub.code, date, destination)) {
-          if (isValidConnection(first, second)) options.push([first, second]);
+          if (isValidConnection(first, second) && this.inSalesWindow(second.origin.code, second.localDate)) options.push([first, second]);
         }
       }
     }
@@ -165,8 +196,22 @@ export class MockGdsService {
     return segment.departureUtc <= this.now();
   }
 
+  /** Se vende si sale en más de 60 min y todos sus vuelos están dentro de la ventana de venta (91 días). */
   isSellable(itinerary: GdsItinerary): boolean {
-    return itinerary.segments[0]!.departureUtc >= this.now() + MIN_SALE_LEAD_MINUTES * 60_000;
+    return (
+      itinerary.segments[0]!.departureUtc >= this.now() + MIN_SALE_LEAD_MINUTES * 60_000 &&
+      itinerary.segments.every((segment) => this.inSalesWindow(segment.origin.code, segment.localDate))
+    );
+  }
+
+  /** Fechas reservables en un aeropuerto: desde hoy (hora local) y durante `SALES_WINDOW_DAYS` días. */
+  salesWindowAt(airportCode: string): { from: string; to: string } {
+    return salesWindow(localDateOf(this.now(), AIRPORTS[airportCode]!.utcOffsetMinutes));
+  }
+
+  inSalesWindow(airportCode: string, localDate: string): boolean {
+    const window = this.salesWindowAt(airportCode);
+    return localDate >= window.from && localDate <= window.to;
   }
 
   // ───────────────────────── tarifas ─────────────────────────
@@ -353,7 +398,12 @@ export class MockGdsService {
 
   flightStatus(flightNumber: string, localDate: string): GdsFlightStatus | undefined {
     const segment = this.resolveSegment(buildSegmentId(flightNumber, localDate));
-    if (!segment || Math.abs(segment.departureUtc - this.now()) > STATUS_WINDOW_DAYS * 86_400_000) {
+    // Vuelos pasados (hasta ~1 año) y futuros solo dentro de la ventana de venta: más allá todavía no están programados.
+    if (
+      !segment ||
+      this.now() - segment.departureUtc > STATUS_WINDOW_DAYS * 86_400_000 ||
+      segment.localDate > this.salesWindowAt(segment.origin.code).to
+    ) {
       return undefined;
     }
     const state = this.operationalState(segment);
@@ -380,25 +430,91 @@ export class MockGdsService {
 
   // ───────────────────────── operaciones (administración) ─────────────────────────
 
+  /** Horario publicado: vuelos, flota y aviones de cada ruta. */
+  currentTimetable(): Timetable {
+    return this.timetable;
+  }
+
+  /**
+   * Publica un horario nuevo a partir de las rutas programadas y la flota registrada (los aviones sin rutas quedan disponibles). Si alguna ruta es inválida o un avión quedaría en dos
+   * lugares a la vez, no cambia nada y lanza `TimetableError` con los conflictos.
+   */
+  publishRoutes(routes: readonly RouteDefinition[], fleet: readonly FleetAircraft[] = []): Timetable {
+    this.timetable = buildTimetable(routes, fleet);
+    return this.timetable;
+  }
+
+  /**
+   * Cupos tomados por clientes (holds y reservas) en los vuelos de hoy en adelante con ese número. Sirve para no cambiar ni
+   * dar de baja vuelos que ya tienen pasajeros.
+   */
+  customerSeatsOn(flightNumber: string): number {
+    // Desde ayer en el huso más occidental de la red: cubre "hoy" en cualquier aeropuerto.
+    const since = addDays(localDateOf(this.now(), -12 * 60), -1);
+    let total = 0;
+    for (const [key, count] of this.reserved) {
+      const parsed = parseSegmentId(key.split('|')[0]!);
+      if (parsed?.flightNumber === flightNumber && parsed.localDate >= since) total += count;
+    }
+    return total;
+  }
+
   /** Vuelos programados que salen en una fecha local (la del aeropuerto de origen), ordenados por hora de salida. */
   flightsOn(localDate: string): GdsSegment[] {
-    return SCHEDULE.map((flight) => this.buildSegment(flight, localDate)).sort((a, b) => a.departureUtc - b.departureUtc);
+    return flightsOperatingOn(this.timetable, localDate)
+      .map((flight) => this.buildSegment(flight, localDate))
+      .sort((a, b) => a.departureUtc - b.departureUtc);
   }
 
   /** Fecha local de hoy en el aeropuerto de origen de un vuelo; `undefined` si el vuelo no existe. */
   localToday(flightNumber: string): string | undefined {
-    const flight = SCHEDULE.find((candidate) => candidate.flightNumber === flightNumber);
+    const flight = this.timetable.flights.find((candidate) => candidate.flightNumber === flightNumber);
     return flight && localDateOf(this.now(), AIRPORTS[flight.origin]!.utcOffsetMinutes);
   }
 
+  /**
+   * Rotación de la flota en una fecha: qué vuelos hace cada avión (según el plan de flota, que nunca pone un avión
+   * en dos lugares a la vez). La fecha de cada vuelo es la local del aeropuerto de origen.
+   */
+  fleetSchedule(localDate: string): FleetSchedule {
+    const plan = fleetPlan(this.timetable);
+    const byAircraft = new Map<string, FleetLeg[]>(plan.aircraft.map((aircraft) => [aircraft.registration, []]));
+    const segments = this.flightsOn(localDate);
+    for (const segment of segments) {
+      const registration = plan.registrationFor(localDate, segment.flight.flightNumber);
+      byAircraft.get(registration ?? '')?.push({
+        segmentId: segment.segmentId,
+        flightNumber: segment.flight.flightNumber,
+        origin: segment.origin.code,
+        destination: segment.destination.code,
+        departure: formatLocalIso(segment.departureUtc, segment.origin.utcOffsetMinutes),
+        arrival: formatLocalIso(segment.arrivalUtc, segment.destination.utcOffsetMinutes),
+      });
+    }
+    const window = this.salesWindowAt('UIO');
+    return {
+      date: localDate,
+      salesWindow: { ...window, days: SALES_WINDOW_DAYS },
+      totalFlights: segments.length,
+      aircraft: plan.aircraft.map((aircraft) => ({ ...aircraft, flights: byAircraft.get(aircraft.registration) ?? [] })),
+    };
+  }
+
   /** Capacidad del avión del segmento y asientos libres (sin ocupación previa ni cupos vendidos), por todas las cabinas. */
-  occupancy(segmentId: string): { totalSeats: number; availableSeats: number } | undefined {
+  occupancy(
+    segmentId: string,
+  ): { totalSeats: number; availableSeats: number; reservedSeats: number; simulatedSeats: number } | undefined {
     const segment = this.resolveSegment(segmentId);
     if (!segment) return undefined;
     const cabins = AIRCRAFT[segment.flight.aircraft].map((cabin) => cabin.cabinClass);
+    const seats = this.seatsOf(segment);
     return {
-      totalSeats: this.seatsOf(segment).length,
+      totalSeats: seats.length,
       availableSeats: cabins.reduce((total, cabin) => total + this.availableSeats(segmentId, cabin), 0),
+      /** Cupos que tomaron clientes de EcoAirlines: holds vigentes y reservas. */
+      reservedSeats: cabins.reduce((total, cabin) => total + (this.reserved.get(inventoryKey(segmentId, cabin)) ?? 0), 0),
+      /** Pasajeros simulados de demostración (solo vuelos de la primera semana). */
+      simulatedSeats: seats.filter((seat) => this.isPreOccupied(segmentId, seat.seatNumber)).length,
     };
   }
 
@@ -408,7 +524,7 @@ export class MockGdsService {
     const origin = AIRPORTS[flight.origin]!;
     const destination = AIRPORTS[flight.destination]!;
     const distance = distanceKm(origin, destination);
-    const durationMinutes = Math.round(((distance / 800) * 60 + 30) / 5) * 5;
+    const durationMinutes = flightDurationMinutes(flight.origin, flight.destination);
     const departureUtc = localToUtcMs(localDate, flight.departureLocal, origin.utcOffsetMinutes);
     return {
       segmentId: buildSegmentId(flight.flightNumber, localDate),
@@ -424,9 +540,9 @@ export class MockGdsService {
   }
 
   private segmentsDeparting(origin: string, localDate: string, destination?: string): GdsSegment[] {
-    return SCHEDULE.filter(
-      (flight) => flight.origin === origin && (!destination || flight.destination === destination),
-    ).map((flight) => this.buildSegment(flight, localDate));
+    return flightsOperatingOn(this.timetable, localDate)
+      .filter((flight) => flight.origin === origin && (!destination || flight.destination === destination))
+      .map((flight) => this.buildSegment(flight, localDate));
   }
 
   /** Retraso determinista (~18 % de los vuelos, 20–69 min) y estado según la hora actual. */
@@ -476,10 +592,21 @@ export class MockGdsService {
     return seats;
   }
 
-  /** Ocupación inicial simulada (35–74 % según el vuelo): otros pasajeros que ya compraron. */
+  /**
+   * Ocupación simulada de demostración: otros pasajeros que ya compraron, **solo en los vuelos que salen en la primera
+   * semana** (contada desde que arranca la API) y con carga moderada (20–49 % según el vuelo), para ver el mapa de asientos
+   * funcionando. Los demás vuelos empiezan vacíos. El corte se fija al primer uso, así un vuelo nunca "gana" pasajeros
+   * simulados después de que un cliente eligió su asiento.
+   */
   private isPreOccupied(segmentId: string, seatNumber: string): boolean {
-    const loadFactor = 35 + (stableHash(`load:${segmentId}`) % 40);
-    return stableHash(`${segmentId}:${seatNumber}`) % 100 < loadFactor;
+    let loadFactor = this.demoLoadFactors.get(segmentId);
+    if (loadFactor === undefined) {
+      this.demoOccupancyUntil ??= this.now() + DEMO_OCCUPANCY_DAYS * 86_400_000;
+      const segment = this.resolveSegment(segmentId);
+      loadFactor = segment && segment.departureUtc <= this.demoOccupancyUntil ? 20 + (stableHash(`load:${segmentId}`) % 30) : 0;
+      this.demoLoadFactors.set(segmentId, loadFactor);
+    }
+    return loadFactor > 0 && stableHash(`${segmentId}:${seatNumber}`) % 100 < loadFactor;
   }
 
   private isSeatFree(segmentId: string, seatNumber: string): boolean {

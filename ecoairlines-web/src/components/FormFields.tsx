@@ -7,6 +7,7 @@ export function Field({
   onChange,
   type = 'text',
   required = true,
+  error,
   ...rest
 }: {
   label: string;
@@ -19,12 +20,16 @@ export function Field({
   placeholder?: string;
   min?: string;
   max?: string;
+  /** Mensaje de error bajo el campo (marca el input como inválido). */
+  error?: string;
 }) {
   const fieldId = useId();
   return (
     <div className="field">
       <label htmlFor={fieldId}>{label}</label>
-      <input id={fieldId} type={type} value={value} required={required} onChange={(event) => onChange(event.target.value)} {...rest} />
+      <input id={fieldId} type={type} value={value} required={required} onChange={(event) => onChange(event.target.value)}
+        aria-invalid={error ? true : undefined} aria-describedby={error ? `${fieldId}-error` : undefined} {...rest} />
+      {error && <span id={`${fieldId}-error`} className="field-error" role="alert">{error}</span>}
     </div>
   );
 }
