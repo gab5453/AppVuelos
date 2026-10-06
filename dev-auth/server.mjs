@@ -6,6 +6,7 @@
 //
 //   POST /register  { name, email, password }  → 201 { access_token, token_type, expires_in, scope, user }
 //   POST /login     { email, password }        → 200 (misma respuesta)
+//   La respuesta incluye user { name, email, role }: CUSTOMER o ADMIN (campos de la plantilla del grupo).
 //   GET  /health                               → 200
 //
 // Sin dependencias: Node ≥ 20 (node:http, node:crypto).
@@ -17,15 +18,21 @@ if (process.env.NODE_ENV === 'production') {
   process.exit(1);
 }
 
-// Deben coincidir con la configuración de la API (vuelos/src/common/auth/auth.config.ts).
+// Deben coincidir con la configuración de la API (EcoAirlines.API/src/auth/auth.config.ts).
 const SECRET = process.env.AUTH_JWT_SECRET ?? 'vuelos-dev-only-secret-do-not-use-in-production-0001';
 const ISSUER = process.env.AUTH_ISSUER ?? 'vuelos-dev-auth';
 const AUDIENCE = process.env.AUTH_AUDIENCE ?? 'vuelos-api';
 const PORT = Number(process.env.PORT ?? 4000);
 const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? 'http://localhost:5173').split(',').map((origin) => origin.trim());
 const TOKEN_TTL_SECONDS = 3600;
-/** Un cliente final no gestiona webhooks (flights:webhooks es para integraciones B2B). */
-const CUSTOMER_SCOPES = 'flights:read flights:hold flights:book flights:cancel';
+/**
+ * Un cliente final no gestiona webhooks (flights:webhooks es para integraciones B2B). `ecoairlines:profile` es un
+ * scope PROPIO (fuera del contrato) para su perfil.
+ */
+const CUSTOMER_SCOPES = 'flights:read flights:hold flights:book flights:cancel ecoairlines:profile';
+/** El administrador opera el panel (`ecoairlines:admin`, fuera del contrato) y puede consultar vuelos y reservas. */
+const ADMIN_SCOPES = 'flights:read flights:webhooks ecoairlines:admin';
+const SCOPES_BY_ROLE = { CUSTOMER: CUSTOMER_SCOPES, ADMIN: ADMIN_SCOPES };
 const MAX_BODY_BYTES = 10 * 1024;
 const LOGIN_ATTEMPTS_PER_MINUTE = 10;
 
@@ -37,24 +44,27 @@ function hashPassword(password, salt = randomBytes(16).toString('hex')) {
   return { salt, hash: scryptSync(password, salt, 64).toString('hex') };
 }
 
-function addUser(name, email, password) {
-  const user = { sub: randomUUID(), name, email, ...hashPassword(password) };
+function addUser(name, email, password, role = 'CUSTOMER') {
+  const user = { sub: randomUUID(), name, email, role, ...hashPassword(password) };
   users.set(email, user);
   return user;
 }
 
 addUser('Usuario Demo', 'demo@ecoairlines.test', 'EcoDemo2026');
+// Solo desarrollo. Las cuentas creadas con /register son siempre CUSTOMER: nadie puede registrarse como ADMIN.
+addUser('Administrador de Operaciones EcoAirlines', 'admin@ecoairlines.test', 'EcoAdmin2026', 'ADMIN');
 
 const base64url = (value) => Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)).toString('base64url');
 
-/** JWT HS256 con los claims que verifica la API: sub, scope, iss, aud, iat, exp, jti. */
+/** JWT HS256 con los claims que verifica la API: sub, scope, iss, aud, iat, exp, jti (más name y role). */
 function issueToken(user) {
   const now = Math.floor(Date.now() / 1000);
   const header = base64url({ alg: 'HS256', typ: 'JWT' });
   const payload = base64url({
     sub: user.sub,
-    scope: CUSTOMER_SCOPES,
+    scope: SCOPES_BY_ROLE[user.role],
     name: user.name,
+    role: user.role,
     iss: ISSUER,
     aud: AUDIENCE,
     iat: now,
@@ -66,8 +76,8 @@ function issueToken(user) {
     access_token: `${header}.${payload}.${signature}`,
     token_type: 'Bearer',
     expires_in: TOKEN_TTL_SECONDS,
-    scope: CUSTOMER_SCOPES,
-    user: { name: user.name, email: user.email },
+    scope: SCOPES_BY_ROLE[user.role],
+    user: { name: user.name, email: user.email, role: user.role },
   };
 }
 
@@ -164,5 +174,5 @@ async function handle(req, res) {
 createServer((req, res) => {
   handle(req, res).catch(() => problem(res, 500, 'Internal Server Error'));
 }).listen(PORT, () => {
-  console.log(`dev-auth escuchando en http://localhost:${PORT} (solo desarrollo). Usuario demo: demo@ecoairlines.test / EcoDemo2026`);
+  console.log(`dev-auth escuchando en http://localhost:${PORT} (solo desarrollo). Usuario demo: demo@ecoairlines.test / EcoDemo2026; administrador: admin@ecoairlines.test / EcoAdmin2026`);
 });

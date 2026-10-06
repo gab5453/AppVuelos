@@ -1,15 +1,15 @@
 # HALLAZGOS — AppVuelos (EcoAirlines)
 
-> **Versión 1 · revisado el 2026-10-04 contra el código** (commit `adb6c48`, etiqueta `v0.1.0`).
+> **Versión 1 · revisado el 2026-10-05 contra el código** (commit `adb6c48`, etiqueta `v0.1.0`).
 > Fusiona el antiguo `HALLAZGOS.md` (contrato) y `HALLAZGOS2.md` (puesta en marcha), y suma la comparación con la **plantilla del booking**
 > (`Vuelos-Integracion-Sistemas-main`) y los requisitos de **RDA1**: API REST, funcionamiento individual y despliegue en la nube (Render).
-> El contrato `vuelos/contract/vuelos-openapi.yaml` **no se modifica**. Es idéntico (mismo hash) al de la plantilla.
+> El contrato `contract/vuelos-openapi.yaml` **no se modifica**. Es idéntico (mismo hash) al de la plantilla.
 >
 > **Para decidir con el líder de booking:** completar la columna *Decisión*. Las versiones anteriores de este archivo y de
 > `HALLAZGOS2.md` están en el historial de git (`git show adb6c48:HALLAZGOS.md`).
 
 **Estados:** 🔴 bloquea ver, usar o desplegar · 🟠 importante · 🟡 menor · ⚪ informativo · ✅ resuelto.
-**Prefijos:** `OPS` = entorno local · `NUBE` = despliegue RDA1 · `PLT` = plantilla del booking · `HALL` = contrato · `DOC` = documentación y proceso.
+**Prefijos:** `OPS` = entorno local · `NUBE` = despliegue RDA1 · `PLT` = plantilla del booking · `EXT` = extensiones fuera del contrato · `HALL` = contrato · `DOC` = documentación y proceso.
 
 ---
 
@@ -17,9 +17,9 @@
 
 | ID | Prioridad | Hallazgo | Requiere decisión | Decisión |
 |----|-----------|----------|-------------------|----------|
-| OPS-01 | 🔴 | API vieja (02/10) ocupa el puerto 3000: `/docs` da 404 | No: cerrar el proceso | |
-| OPS-02 | 🔴 | El frontend apunta por defecto al 3000 (la API vieja) | No: depende de OPS-01 | |
-| OPS-03 | 🟠 | Servicios de la sesión anterior siguen ocupando 3001, 4000 y 5173 | No: cerrarlos | |
+| OPS-01 | ✅ | API vieja (02/10) ocupa el puerto 3000: `/docs` da 404 | Resuelto (05/10: ya no corre) | |
+| OPS-02 | ✅ | El frontend apunta por defecto al 3000 (la API vieja) | Resuelto con OPS-01 | |
+| OPS-03 | ✅ | Servicios de la sesión anterior siguen ocupando 3001, 4000 y 5173 | Resuelto (05/10: ya no corren) | |
 | NUBE-01 | 🔴 | Swagger no queda usable en la nube (apagado en producción y "Try it out" sin la URL pública) | Sí | |
 | NUBE-02 | 🔴 | Datos en memoria: en Render se pierden al reiniciar o "dormir" el servicio | Sí | |
 | NUBE-03 | 🔴 | `dev-auth` no arranca en producción y la API exige configuración de auth explícita | Sí | |
@@ -30,29 +30,32 @@
 | PLT-04 | 🟡 | Los DTOs de la plantilla son más estrictos que el contrato | Informativo | |
 | PLT-05 | ⚪ | Entidad `Vuelo` y `CreateVueloDto` de la plantilla no existen en el contrato | Informativo | |
 | PLT-06 | ⚪ | Estructura interna distinta (un módulo frente a varios dominios) | Informativo | |
-| DOC-01 | 🟡 | Documentación dice "25 operaciones"; son **22** | No: corregir | |
-| DOC-02 | 🟠 | Gemini CLI no lee `AGENTS.md` por defecto | No: configurar | |
+| DOC-01 | ✅ | Documentación dice "25 operaciones"; son **22** | Resuelto (V1.C) | |
+| DOC-02 | ✅ | Gemini CLI no lee `AGENTS.md` por defecto | Resuelto (`GEMINI.md`) | |
 | OPS-04 | 🟠 | `127.0.0.1:5173` no abre; solo `localhost` | No | |
 | OPS-05 | 🟠 | Si el 5173 está ocupado, Vite cambia de puerto y CORS bloquea | No | |
 | OPS-06 | 🟡 | Node 24.12 < 24.15 que piden algunas dependencias | No | |
+| EXT-01 | 🟠 | Endpoints propios fuera del contrato (perfil, cambio de asiento, administración, observabilidad) | **Sí**: acordar con el líder de booking | |
+| EXT-02 | ⚪ | La plantilla del grupo expone la administración sin autenticación; aquí exige `ecoairlines:admin` | Informativo | |
+| EXT-03 | 🟡 | El estado que fija el administrador no se refleja en `FlightSegment.status` de la búsqueda | Sí (si se quiere reflejar) | |
 | HALL-01…26 | — | Inconsistencias del contrato (sección 6). 2 resueltas, 24 abiertas | Sí | ver tabla |
 
 ---
 
 ## 2. Entorno local (`OPS`) — impiden ver o usar el proyecto hoy
 
-### OPS-01 🔴 Una API vieja ocupa el puerto 3000 *(antes H2-01, sigue vigente)*
+### OPS-01 ✅ Una API vieja ocupa el puerto 3000 *(resuelto: el 05/10 ya no había procesos en el puerto)*
 - **Verificado hoy:** PID **28580**, `node dist/main.js`, iniciado el **02/10/2026 21:01**, antes de la Fase 1. Es un proceso huérfano: su terminal ya
   se cerró. `GET /docs` → 404, `/search` → 0 ofertas, y no envía `X-Request-Id` ni cabeceras de seguridad.
 - **Impacto:** `localhost:3000/docs` no muestra Swagger y `npm run start:dev` falla con `EADDRINUSE`.
 - **Acción:** `Stop-Process -Id 28580` y luego `cd vuelos; npm run start:dev`.
 
-### OPS-02 🔴 El frontend usa por defecto el puerto 3000 *(antes H2-02)*
-- `frontend/src/config.ts` → `http://localhost:3000`. Contra la API vieja, el JWT real de `dev-auth` da **403** al reservar, porque esa
+### OPS-02 ✅ El frontend usa por defecto el puerto 3000 *(resuelto con OPS-01)*
+- `ecoairlines-web/src/config.ts` (antes `frontend/`) → `http://localhost:3000`. Contra la API vieja, el JWT real de `dev-auth` da **403** al reservar, porque esa
   versión usa el verificador simulado antiguo.
-- **Acción:** se resuelve con OPS-01. Si la API corre en otro puerto, crear `frontend/.env` con `VITE_API_URL`.
+- **Acción:** se resuelve con OPS-01. Si la API corre en otro puerto, crear `ecoairlines-web/.env` con `VITE_API_URL`.
 
-### OPS-03 🟠 Siguen corriendo los servicios que levanté en la sesión anterior *(nuevo)*
+### OPS-03 ✅ Siguen corriendo los servicios que levanté en la sesión anterior *(resuelto: el 05/10 ya no corrían; desde V1.C los procesos de prueba se detienen al terminar)*
 - PIDs **21772** (API en 3001), **16720** (dev-auth en 4000) y **40972** (Vite en 5173), del 04/10 19:24.
 - **Impacto:** si levantas el proyecto tú, el 4000 y el 5173 ya están ocupados. `npm start` de dev-auth falla, y Vite toma otro puerto,
   con lo que CORS lo bloquea (OPS-05).
@@ -146,13 +149,37 @@
 
 ---
 
+## 4b. Extensiones fuera del contrato (`EXT`) *(nuevo, V1.D)*
+
+> Endpoints PROPIOS de EcoAirlines, documentados en `contract/ecoairlines-extensions.yaml` y publicados en Swagger aparte
+> (`/docs/extensions.json`). El contrato `vuelos-openapi.yaml` no cambia. Sus campos son los de la plantilla del grupo de vuelos
+> (`APIVUELOSV1DIEGOCEVALLOS`), para coincidir al integrarse con el booking.
+
+### EXT-01 🟠 Endpoints propios que el booking debe conocer
+- `GET/PUT /customers/me` (perfil, scope `ecoairlines:profile`), `PUT /bookings/{bookingId}/seat` (cambio de asiento, `flights:book`),
+  `GET /admin/dashboard-stats`, `PUT /admin/flights/{flightNumber}/status`, `GET /admin/flights/{flightNumber}/passengers` y
+  `GET /admin/observability` (`ecoairlines:admin`).
+- **Impacto:** los scopes `ecoairlines:*` no existen en el authorization server del contrato (`auth.booking-hub.com`); hoy los emite `dev-auth`.
+- **Acción:** acordar con el líder de booking si estas rutas pasan al contrato (o a un contrato propio de la aerolínea) y cómo se
+  emiten los scopes y el rol de administrador.
+
+### EXT-02 ⚪ La plantilla del grupo no protege la administración
+- En la plantilla, `/admin/*` no exige autenticación y `POST /admin/login` compara credenciales fijas y devuelve un token que nadie
+  verifica. Aquí se conservan **las rutas y los campos**, pero el acceso exige un JWT con `ecoairlines:admin` (401 sin token, 403 con token
+  de cliente) y el login lo hace el servidor de autenticación, no la API.
+
+### EXT-03 🟡 Estado operativo fijado por el administrador
+- `GET /flights/{flightNumber}/status` devuelve el estado que fija el administrador, pero el campo `status` de cada `FlightSegment` en la
+  búsqueda y en las reservas sigue saliendo del GDS.
+- **Acción:** decidir si debe reflejarse también ahí (requiere que search consulte a flight-status: una dependencia nueva entre dominios).
+
 ## 5. Documentación y proceso (`DOC`)
 
-### DOC-01 🟡 "25 operaciones" es incorrecto: son 22 *(antes H2-05, sigue vigente)*
+### DOC-01 ✅ "25 operaciones" es incorrecto: son 22 *(resuelto el 05/10 en `EcoAirlines.API/README.md`; `vuelos/AUDITORIA.md` ya no existe)*
 - Aparece en `CAMBIOS.md` (resultados de las fases 1 y 7), `vuelos/AUDITORIA.md` (AUD-012) y `vuelos/README.md` (tabla de pruebas e2e).
   Las pruebas no usan un número fijo: calculan la lista desde el contrato.
 
-### DOC-02 🟠 Gemini no leerá `AGENTS.md` automáticamente *(nuevo)*
+### DOC-02 ✅ Gemini no leerá `AGENTS.md` automáticamente *(resuelto por el supervisor: hoy es `GEMINI.md`, en la raíz)*
 - Cambiaste el rol de auditor a **Gemini** en `vuelos/AGENTS.md` (cambio aún sin commit). Gemini CLI carga por defecto **`GEMINI.md`**;
   no hay `GEMINI.md` ni `~/.gemini/settings.json` con `contextFileName`.
 - **Impacto:** Gemini auditaría sin las reglas de auditoría.

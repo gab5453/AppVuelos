@@ -1,0 +1,479 @@
+openapi: 3.0.3
+info:
+  title: EcoAirlines — Extensiones fuera del contrato
+  version: 1.0.0
+  description: |
+    Endpoints PROPIOS de EcoAirlines que NO forman parte del contrato `vuelos-openapi.yaml` (GDS Flight Core API),
+    que se mantiene sin cambios. Cubren el perfil del cliente, el cambio de asiento y la administración, con los
+    mismos campos que la plantilla del grupo de vuelos (`APIVUELOSV1DIEGOCEVALLOS`), para facilitar la integración
+    con el booking (RDA2). Deben acordarse con el líder de booking antes de integrarse.
+
+    Los `$ref` a `#/components/schemas/...` y `#/components/responses/...` que no están definidos aquí son los del
+    contrato: la API combina ambos documentos en memoria al publicarlos.
+
+    Autenticación: JWT Bearer del servidor de autenticación. Scopes propios (fuera del contrato):
+    - `ecoairlines:profile`: perfil del propio cliente.
+    - `ecoairlines:admin`: administración y observabilidad (solo administradores).
+servers:
+  - url: https://api.booking-hub.com/flights/v1
+    description: Producción (misma base que el contrato)
+security:
+  - EcoAirlinesBearer: []
+tags:
+  - name: Customers
+    description: Perfil del cliente y cambio de asiento
+  - name: Admin
+    description: Administración de operaciones (solo administradores)
+paths:
+  /customers/me:
+    get:
+      tags: [Customers]
+      summary: Perfil del cliente autenticado
+      description: El dueño es el `sub` del JWT. Requiere el scope `ecoairlines:profile`.
+      responses:
+        '200':
+          description: Perfil del cliente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+    put:
+      tags: [Customers]
+      summary: Crear o reemplazar el perfil del cliente autenticado
+      description: Mismos campos que `PassengerItem` del contrato, sin los propios de una reserva. Requiere `ecoairlines:profile`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomerProfileRequest'
+      responses:
+        '200':
+          description: Perfil guardado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerProfile'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+  /bookings/{bookingId}/seat:
+    put:
+      tags: [Customers]
+      summary: Cambiar el asiento de un pasajero de la reserva
+      description: Campos de `ChangeSeatRequest`/`ChangeSeatResponse` de la plantilla del grupo. Requiere `flights:book` y que la reserva sea del usuario.
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeSeatRequest'
+      responses:
+        '200':
+          description: Asiento cambiado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeSeatResponse'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+        '409':
+          $ref: '#/components/responses/ProblemDetails409'
+        '422':
+          $ref: '#/components/responses/ProblemDetails422'
+  /admin/dashboard-stats:
+    get:
+      tags: [Admin]
+      summary: Indicadores de reservas, rutas y ocupación de los vuelos de hoy
+      description: '`AdminDashboardStatsDto` de la plantilla del grupo, con datos reales. Requiere `ecoairlines:admin`.'
+      responses:
+        '200':
+          description: Indicadores
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminDashboardStats'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+  /admin/flights/{flightNumber}/status:
+    put:
+      tags: [Admin]
+      summary: Cambiar el estado operativo de un vuelo
+      description: |
+        `UpdateFlightStatusRequest` de la plantilla. El estado queda registrado y `GET /flights/{flightNumber}/status`
+        del contrato lo devuelve. DEPARTED y ARRIVED guardan además la hora real. Requiere `ecoairlines:admin`.
+      parameters:
+        - $ref: '#/components/parameters/FlightNumber'
+        - $ref: '#/components/parameters/FlightDate'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateFlightStatusRequest'
+      responses:
+        '200':
+          description: Estado actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FlightStatus'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+  /admin/flights/{flightNumber}/passengers:
+    get:
+      tags: [Admin]
+      summary: Pasajeros de reservas confirmadas en un vuelo
+      description: Devuelve `PassengerItem` del contrato, con el asiento de ese vuelo. Requiere `ecoairlines:admin`.
+      parameters:
+        - $ref: '#/components/parameters/FlightNumber'
+        - $ref: '#/components/parameters/FlightDate'
+      responses:
+        '200':
+          description: Pasajeros del vuelo
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PassengerItem'
+        '400':
+          $ref: '#/components/responses/ProblemDetails400'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+        '404':
+          $ref: '#/components/responses/ProblemDetails404'
+  /admin/observability:
+    get:
+      tags: [Admin]
+      summary: Métricas HTTP del backend (observabilidad)
+      description: |
+        Peticiones por ruta y status, latencias y errores recientes con su `X-Request-Id`. Nunca incluye headers,
+        bodies, tokens ni query strings. Se reinicia con la API. Requiere `ecoairlines:admin`.
+      responses:
+        '200':
+          description: Métricas del proceso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservabilitySnapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized401'
+        '403':
+          $ref: '#/components/responses/ProblemDetails403'
+components:
+  securitySchemes:
+    EcoAirlinesBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT del servidor de autenticación (en desarrollo, `dev-auth` o `npm run token`).
+  parameters:
+    FlightNumber:
+      name: flightNumber
+      in: path
+      required: true
+      schema:
+        type: string
+        example: EA300
+    FlightDate:
+      name: date
+      in: query
+      required: false
+      description: Fecha local de salida (YYYY-MM-DD). Si se omite, hoy en el aeropuerto de origen.
+      schema:
+        type: string
+        format: date
+  responses:
+    Unauthorized401:
+      description: Falta el token o no es válido
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+  schemas:
+    CustomerContact:
+      type: object
+      required: [email, phone]
+      properties:
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+    CustomerProfileRequest:
+      type: object
+      required: [firstName, lastName, documentType, documentNumber, nationality, birthDate, gender, contact]
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        documentType:
+          type: string
+          enum: [PASSPORT, NATIONAL_ID]
+        documentNumber:
+          type: string
+        nationality:
+          type: string
+          pattern: '^[A-Z]{2}$'
+          example: EC
+        documentExpiryDate:
+          type: string
+          format: date
+        birthDate:
+          type: string
+          format: date
+        gender:
+          type: string
+          enum: [M, F, X]
+        contact:
+          $ref: '#/components/schemas/CustomerContact'
+    CustomerProfile:
+      allOf:
+        - $ref: '#/components/schemas/CustomerProfileRequest'
+        - type: object
+          required: [updatedAt]
+          properties:
+            updatedAt:
+              type: string
+              format: date-time
+    ChangeSeatRequest:
+      type: object
+      required: [newSeatNumber]
+      properties:
+        passengerId:
+          type: string
+          description: Si se omite, el primer pasajero con asiento.
+        newSeatNumber:
+          type: string
+          example: 14C
+        segmentId:
+          type: string
+          description: Obligatorio si la reserva tiene más de un vuelo (extensión respecto a la plantilla).
+    ChangeSeatResponse:
+      type: object
+      required: [bookingId, passengerId, seatNumber, segmentId, message]
+      properties:
+        bookingId:
+          type: string
+          format: uuid
+        passengerId:
+          type: string
+        seatNumber:
+          type: string
+        segmentId:
+          type: string
+        message:
+          type: string
+    RouteStat:
+      type: object
+      required: [route, flightsCount, bookingsCount, totalRevenue]
+      properties:
+        route:
+          type: string
+          example: Quito (UIO) ↔ Guayaquil (GYE)
+        flightsCount:
+          type: integer
+        bookingsCount:
+          type: integer
+        totalRevenue:
+          type: number
+    FlightOccupancy:
+      type: object
+      required: [flightId, flightNumber, route, scheduledDeparture, status, totalSeats, bookedSeats, availableSeats, occupancyPercentage]
+      properties:
+        flightId:
+          type: string
+          example: EA300-20261025
+        flightNumber:
+          type: string
+        route:
+          type: string
+          example: UIO ✈ BOG
+        scheduledDeparture:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [SCHEDULED, BOARDING, DEPARTED, DELAYED, ARRIVED, CANCELLED, DIVERTED]
+        totalSeats:
+          type: integer
+        bookedSeats:
+          type: integer
+        availableSeats:
+          type: integer
+        occupancyPercentage:
+          type: number
+    AdminDashboardStats:
+      type: object
+      required:
+        - totalBookings
+        - confirmedBookings
+        - cancelledBookings
+        - totalPassengers
+        - totalRevenue
+        - totalFlightsToday
+        - routeStats
+        - flightOccupancies
+        - recentBookings
+      properties:
+        totalBookings:
+          type: integer
+        confirmedBookings:
+          type: integer
+        cancelledBookings:
+          type: integer
+        totalPassengers:
+          type: integer
+        totalRevenue:
+          type: number
+        totalFlightsToday:
+          type: integer
+        routeStats:
+          type: array
+          items:
+            $ref: '#/components/schemas/RouteStat'
+        flightOccupancies:
+          type: array
+          items:
+            $ref: '#/components/schemas/FlightOccupancy'
+        recentBookings:
+          type: array
+          items:
+            $ref: '#/components/schemas/BookingDetail'
+    UpdateFlightStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [SCHEDULED, BOARDING, DEPARTED, DELAYED, ARRIVED, CANCELLED, DIVERTED]
+    LatencyStats:
+      type: object
+      required: [averageMs, p95Ms, maxMs]
+      properties:
+        averageMs:
+          type: number
+        p95Ms:
+          type: number
+        maxMs:
+          type: number
+    RouteMetrics:
+      type: object
+      required: [method, route, count, statusClasses, latency]
+      properties:
+        method:
+          type: string
+        route:
+          type: string
+          description: Patrón de la ruta (sin valores de parámetros ni query string).
+        count:
+          type: integer
+        statusClasses:
+          $ref: '#/components/schemas/StatusClassCounts'
+        latency:
+          $ref: '#/components/schemas/LatencyStats'
+    StatusClassCounts:
+      type: object
+      required: [2xx, 3xx, 4xx, 5xx]
+      properties:
+        2xx:
+          type: integer
+        3xx:
+          type: integer
+        4xx:
+          type: integer
+        5xx:
+          type: integer
+    RecentError:
+      type: object
+      required: [at, method, route, status, durationMs]
+      properties:
+        at:
+          type: string
+          format: date-time
+        method:
+          type: string
+        route:
+          type: string
+        status:
+          type: integer
+        durationMs:
+          type: number
+        requestId:
+          type: string
+    ObservabilitySnapshot:
+      type: object
+      required: [generatedAt, startedAt, uptimeSeconds, process, totals, routes, recentErrors]
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+        uptimeSeconds:
+          type: integer
+        process:
+          type: object
+          required: [nodeVersion, rssMb, heapUsedMb, heapTotalMb]
+          properties:
+            nodeVersion:
+              type: string
+            rssMb:
+              type: number
+            heapUsedMb:
+              type: number
+            heapTotalMb:
+              type: number
+        totals:
+          type: object
+          required: [requests, statusClasses, latency]
+          properties:
+            requests:
+              type: integer
+            statusClasses:
+              $ref: '#/components/schemas/StatusClassCounts'
+            latency:
+              $ref: '#/components/schemas/LatencyStats'
+        routes:
+          type: array
+          items:
+            $ref: '#/components/schemas/RouteMetrics'
+        recentErrors:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecentError'

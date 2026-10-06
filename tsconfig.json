@@ -1,0 +1,10 @@
+{
+  // Solución: compila las 4 capas en orden de dependencias (equivale a EcoAirlines.sln).
+  "files": [],
+  "references": [
+    { "path": "./EcoAirlines.DataAccess" },
+    { "path": "./EcoAirlines.DataManagement" },
+    { "path": "./EcoAirlines.Business" },
+    { "path": "./EcoAirlines.API" }
+  ]
+}

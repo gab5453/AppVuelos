@@ -1,0 +1,23 @@
+{
+  // Verificación de tipos de las pruebas (unitarias, e2e y de arquitectura). No emite archivos.
+  // Requiere la solución compilada: `npm run typecheck` ejecuta antes `tsc -b`.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": [
+    "EcoAirlines.*/src/**/*.spec.ts",
+    "EcoAirlines.API/test/**/*.ts",
+    "vitest.config.ts",
+    "vitest.config.e2e.ts",
+    "vitest.shared.ts"
+  ],
+  "references": [
+    { "path": "./EcoAirlines.DataAccess" },
+    { "path": "./EcoAirlines.DataManagement" },
+    { "path": "./EcoAirlines.Business" },
+    { "path": "./EcoAirlines.API" }
+  ]
+}

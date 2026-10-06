@@ -8,14 +8,26 @@ arquitectura modular, seguridad, pruebas automatizadas y trazabilidad de cada de
 
 ## Estructura
 
+La API está organizada en **4 capas**, como una solución .NET con 4 proyectos (`.sln` + `.csproj`). Aquí cada capa es un
+workspace npm con su `package.json` y su `tsconfig.json`, y cada una solo usa las capas inferiores:
+
+```
+EcoAirlines.API  →  EcoAirlines.Business  →  EcoAirlines.DataManagement  →  EcoAirlines.DataAccess
+```
+
 | Carpeta / archivo | Contenido |
 |-------------------|-----------|
-| [`vuelos/`](vuelos) | **API REST** (NestJS + TypeScript). Implementa [`vuelos/contract/vuelos-openapi.yaml`](vuelos/contract/vuelos-openapi.yaml) y publica Swagger en `/docs` |
-| [`frontend/`](frontend) | **Sitio web** (React + TypeScript + Vite), verde y blanco |
+| [`EcoAirlines.API/`](EcoAirlines.API) | **API REST** (NestJS + TypeScript): controllers, autenticación, seguridad, ProblemDetails, idempotencia y Swagger en `/docs` |
+| [`EcoAirlines.Business/`](EcoAirlines.Business) | **Lógica de negocio**: services, DTOs del contrato, reglas y excepciones |
+| [`EcoAirlines.DataManagement/`](EcoAirlines.DataManagement) | **Patrón repositorio**: interfaces, repositorios y gateways hacia el GDS y la Payment API |
+| [`EcoAirlines.DataAccess/`](EcoAirlines.DataAccess) | **Datos**: entidades, un contexto de datos por base de datos futura, GDS y Payment API simulados, seed |
+| [`contract/`](contract) | Contrato [`vuelos-openapi.yaml`](contract/vuelos-openapi.yaml): fuente de verdad, no se modifica. Anexo [`ecoairlines-extensions.yaml`](contract/ecoairlines-extensions.yaml): endpoints propios fuera del contrato (perfil, cambio de asiento, administración y observabilidad) |
+| [`ecoairlines-web/`](ecoairlines-web) | **Sitio web** (React + TypeScript + Vite), verde y blanco |
 | [`dev-auth/`](dev-auth) | Servidor de **autenticación de desarrollo**: emite los JWT que verifica la API (sin dependencias) |
 | [`CAMBIOS.md`](CAMBIOS.md) | Plan por fases, aprobado antes de implementar, con el resultado y las desviaciones de cada fase |
 | [`HALLAZGOS.md`](HALLAZGOS.md) | Hallazgos verificados: entorno local, despliegue en la nube, plantilla del booking y contrato |
-| [`vuelos/AUDITORIA.md`](vuelos/AUDITORIA.md) | Auditoría técnica y su seguimiento |
+| [`AUDITORIA.md`](AUDITORIA.md) | Auditoría técnica de Gemini |
+| [`CLAUDE.md`](CLAUDE.md) / [`GEMINI.md`](GEMINI.md) | Reglas del programador (Claude) y del auditor (Gemini) |
 
 ## Requisitos
 
@@ -27,8 +39,7 @@ arquitectura modular, seguridad, pruebas automatizadas y trazabilidad de cada de
 En tres terminales:
 
 ```bash
-# 1) API — http://localhost:3000  (Swagger: http://localhost:3000/docs)
-cd vuelos
+# 1) API — http://localhost:3000  (Swagger: http://localhost:3000/docs). Desde la raíz del repositorio:
 npm install
 npm run start:dev
 
@@ -37,24 +48,26 @@ cd dev-auth
 npm start
 
 # 3) Frontend — http://localhost:5173
-cd frontend
+cd ecoairlines-web
 npm install
 npm run dev
 ```
 
-Abrir **http://localhost:5173** (con `localhost`, no `127.0.0.1`). Usuario de prueba: `demo@ecoairlines.test` / `EcoDemo2026`.
+Abrir **http://localhost:5173** (con `localhost`, no `127.0.0.1`). Usuarios de prueba: cliente `demo@ecoairlines.test` / `EcoDemo2026`; administrador `admin@ecoairlines.test` / `EcoAdmin2026`
+(panel de administración y observabilidad en `/admin`).
 
-Para probar en Swagger los endpoints protegidos, generar un token con `cd vuelos && npm run token` y pegarlo en *Authorize* → `DevBearer`.
+Para probar en Swagger los endpoints protegidos, generar un token con `npm run token` (en la raíz) y pegarlo en *Authorize* → `DevBearer`.
 
 ## Calidad
 
 ```bash
-cd vuelos   && npx tsc --noEmit && npm run lint && npm test && npm run test:e2e
-cd frontend && npm run lint && npm run build
+npm run typecheck && npm run lint && npm test && npm run test:e2e && npm run build   # API (raíz)
+cd ecoairlines-web && npm run lint && npm run build                                   # frontend
 ```
 
 Las pruebas e2e validan **cada respuesta real de la API contra los schemas del contrato** y exigen cubrir todas las combinaciones
-operación + status documentadas. Detalle en [`vuelos/README.md`](vuelos/README.md).
+operación + status documentadas. La prueba de arquitectura verifica el sentido de las dependencias entre capas y que ningún dominio
+acceda a los datos de otro. Detalle en [`EcoAirlines.API/README.md`](EcoAirlines.API/README.md).
 
 ## Seguridad (resumen)
 
@@ -67,4 +80,4 @@ se niega a arrancar con ellos en producción.
 
 1. Cada cambio se propone primero en `CAMBIOS.md` y se aprueba antes de implementarse.
 2. El contrato **no se modifica**: las inconsistencias se registran en `HALLAZGOS.md`.
-3. Gemini audita el resultado (`vuelos/AUDITORIA.md`) y el responsable del proyecto supervisa el funcionamiento antes de cada commit.
+3. Gemini audita el resultado (`AUDITORIA.md`) y el responsable del proyecto supervisa el funcionamiento antes de cada commit.

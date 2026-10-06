@@ -1,0 +1,44 @@
+{
+  "name": "ecoairlines",
+  "version": "1.0.0",
+  "description": "EcoAirlines — API REST de vuelos en 4 capas (API, Business, DataManagement, DataAccess). Reto 1.",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "workspaces": [
+    "EcoAirlines.DataAccess",
+    "EcoAirlines.DataManagement",
+    "EcoAirlines.Business",
+    "EcoAirlines.API"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "typecheck": "tsc -b && tsc -p tsconfig.spec.json",
+    "start": "node --enable-source-maps EcoAirlines.API/dist/main.js",
+    "start:dev": "node EcoAirlines.API/scripts/dev.mjs",
+    "token": "tsc -b && node EcoAirlines.API/scripts/generate-token.mjs",
+    "lint": "oxlint EcoAirlines.API/src EcoAirlines.API/test EcoAirlines.API/scripts EcoAirlines.Business/src EcoAirlines.DataManagement/src EcoAirlines.DataAccess/src",
+    "format": "prettier --write \"EcoAirlines.*/{src,test}/**/*.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:cov": "vitest run --coverage",
+    "test:e2e": "vitest run --config ./vitest.config.e2e.ts"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^12.0.1",
+    "@types/express": "^5.0.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.0.0",
+    "@types/supertest": "^7.0.0",
+    "@types/swagger-ui-express": "^4.1.8",
+    "@vitest/coverage-v8": "^4.1.2",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "oxlint": "^1.58.0",
+    "prettier": "^3.4.2",
+    "supertest": "^7.0.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}
