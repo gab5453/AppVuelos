@@ -6,6 +6,21 @@ arquitectura modular, seguridad, pruebas automatizadas y trazabilidad de cada de
 
 > EcoAirlines es ficticia: vuelos, precios y cifras ambientales son ilustrativos.
 
+## En línea (Azure)
+
+| | URL |
+|---|-----|
+| **Web** (marketplace y panel de administración) | https://nice-hill-090e19c10.1.azurestaticapps.net |
+| **API · Swagger** | https://ecoairlines-api-gv-fjfaa7b5geg3hphs.brazilsouth-01.azurewebsites.net/docs |
+
+Clientes de prueba: `demo@ecoairlines.test` / `EcoDemo2026` y `maria@ecoairlines.test` / `EcoMaria2026`. La clave del administrador se
+entrega aparte.
+
+En Swagger se obtiene el token desde el documento **"dev-auth"** del selector (`POST /login`) y se pega en **Authorize**.
+
+El despliegue (Static Web Apps, App Service, PostgreSQL Flexible Server y GitHub Actions) está en
+[`DESPLIEGUE_AZURE.md`](DESPLIEGUE_AZURE.md).
+
 ## Estructura
 
 La API está organizada en **4 capas**, como una solución .NET con 4 proyectos (`.sln` + `.csproj`). Aquí cada capa es un
@@ -30,6 +45,7 @@ EcoAirlines.API  →  EcoAirlines.Business  →  EcoAirlines.DataManagement  →
 | [`EVENTOS.md`](EVENTOS.md) | **Eventos (SOA/EDA)**: catálogo, bus interno, webhooks firmados y evolución hacia un broker |
 | [`PRUEBASSW.md`](PRUEBASSW.md) | Guía de pruebas manuales en Swagger, incluidos los errores 400–429 |
 | [`CRITERIOS.md`](CRITERIOS.md) | Estado frente a la rúbrica de evaluación y descripción de cada parte para la defensa |
+| [`DESPLIEGUE_AZURE.md`](DESPLIEGUE_AZURE.md) | Despliegue en Azure paso a paso, URLs públicas y problemas frecuentes |
 | [`AUDITORIA.md`](AUDITORIA.md) | Auditoría técnica de Gemini sobre la primera versión (histórica) |
 | [`CLAUDE.md`](CLAUDE.md) / [`GEMINI.md`](GEMINI.md) | Reglas del programador (Claude) y del auditor (Gemini) |
 

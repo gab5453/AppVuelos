@@ -3,6 +3,16 @@
 Guía para publicar los 4 componentes en Azure: la **web**, la **API**, la **base de datos PostgreSQL** y **dev-auth**. Hay pasos que
 haces tú en el portal de Azure (🧑) y cambios de código que hago yo (🤖) antes de desplegar.
 
+> ✅ **Desplegado el 07/10/2026** (suscripción Azure for Students, región **Brazil South**):
+>
+> | Componente | URL |
+> |------------|-----|
+> | Web | https://nice-hill-090e19c10.1.azurestaticapps.net |
+> | API · Swagger | https://ecoairlines-api-gv-fjfaa7b5geg3hphs.brazilsouth-01.azurewebsites.net/docs |
+> | dev-auth | https://ecoairlines-auth-gv-fscaa6e6gqbcb7ew.brazilsouth-01.azurewebsites.net/health |
+>
+> Lo aprendido en el despliegue está en la sección 6 (problemas frecuentes).
+
 ---
 
 ## 1. Qué servicio de Azure usa cada parte
@@ -102,6 +112,8 @@ Un grupo de recursos es una "carpeta" que agrupa todo el proyecto. Borrarlo borr
    - **+ Agregar dirección IP del cliente actual**, para conectarte desde tu PC con pgAdmin o DBeaver.
 4. **Revisar y crear** → **Crear**. Tarda unos 5–10 minutos.
 5. Cuando termine: entra al servidor → **Bases de datos** → **+ Agregar** → nombre **`ecoairlines`** → Guardar.
+   ⚠️ **No te saltes este paso.** Azure crea el servidor solo con las bases `postgres`, `azure_maintenance` y `azure_sys`. Si
+   `ecoairlines` no existe, la API y dev-auth se cierran al arrancar y responden **503** (nos pasó en el primer despliegue).
 6. Anota el **nombre del servidor** (aparece en "Información general" como `ecoairlines-db-ga.postgres.database.azure.com`).
 
 La cadena de conexión que usará la API será:
@@ -191,6 +203,9 @@ En cada App Service: **Configuración** → **Variables de entorno** → pestañ
 Además: **Configuración** → **Configuración general** → **Comando de inicio**: `node EcoAirlines.API/dist/main.js`. Y activa
 **Siempre activo (Always On)**, disponible en B1.
 
+**Activa los registros en las dos apps:** **Supervisión** → **Registros de App Service** → **Registro de aplicaciones: Sistema de
+archivos** → Guardar. Sin esto, la "Secuencia de registro" no muestra lo que imprime la app y no se ve por qué falla al arrancar.
+
 **dev-auth (`ecoairlines-auth-ga`):**
 
 | Nombre | Valor |
@@ -264,3 +279,8 @@ Para terminar los workflows y la configuración necesito:
 | Error de conexión a PostgreSQL | Falta permitir los servicios de Azure en "Redes", o falta `sslmode=require` | Paso 2.3 y la cadena de conexión |
 | Recargar `/admin` da 404 | Falta `staticwebapp.config.json` | Cambio 🤖 4 |
 | La primera petición tarda ~20 s | La app estaba dormida (sin Always On, o en plan F1) | Activar Always On en B1 |
+| La API y dev-auth responden **503** y la "Secuencia de registro" no muestra nada | La app se cierra al arrancar (en nuestro caso, **faltaba la base `ecoairlines`**) y los registros de aplicación están apagados | Crear la base (paso 2.5), activar "Registro de aplicaciones: Sistema de archivos" y reiniciar |
+| No aparece ningún vuelo en la web | La web no llega a la API (caída o URL mal compilada). Los vuelos no se guardan en la base: se generan al arrancar | Revisar que `/docs` de la API responda; luego recargar la web con Ctrl+F5 |
+| Observabilidad muestra `GET (sin ruta) 404` sin que nadie use la web | **No es un error**: es la sonda de Azure al arrancar la app (`GET /robots933456.txt`) o alguien que abrió la raíz de la API (botón "Explorar"). La API no tiene rutas en `/` | Ninguna. Con los registros activados, la línea de acceso muestra el `path` exacto con el mismo `requestId` |
+| `/admin/...` responde 401 | Petición sin token o con token vencido (dura 1 h) | Iniciar sesión de nuevo. Un **cliente** recibe **403**, no 401 |
+| El administrador no puede entrar | Con `ADMIN_PASSWORD` definido en dev-auth, la clave ya no es `EcoAdmin2026` | Usar la clave de `ADMIN_PASSWORD` |

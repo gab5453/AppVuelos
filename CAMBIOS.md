@@ -873,6 +873,30 @@ seguridad.
 - secretos de publicación en GitHub;
 - primera ejecución de los workflows.
 
+### V1.N — Despliegue en Azure — ✅ EN LÍNEA (07/10)
+
+- **Recursos** (Azure for Students, región Brazil South):
+  - Static Web Apps (web);
+  - App Service B1 con dos apps (`ecoairlines-api-gv` y `ecoairlines-auth-gv`, Node 24);
+  - PostgreSQL Flexible Server B1ms (`ecoairlines-db-gv`).
+- **Despliegue continuo:** los tres workflows de GitHub Actions de V1.M, con los perfiles de publicación como secretos del
+  repositorio.
+- **Incidente:** la API y dev-auth respondían 503 sin registros visibles.
+  - Causa: **no existía la base `ecoairlines`** en el servidor (Azure solo crea `postgres`, `azure_maintenance` y `azure_sys`),
+    y los registros de aplicación estaban apagados.
+  - Se creó la base. Al reiniciar, la API creó sus 15 tablas y cargó la red base, y dev-auth creó `auth.users`.
+- **404 "(sin ruta)" en Observabilidad:** se comprobó con una petición marcada (`X-Request-Id`) que corresponde a visitas a la raíz
+  de la API o a la sonda de arranque de Azure (`/robots933456.txt`). No es un error de la aplicación.
+- **Verificación en la nube:**
+  - login con CORS desde la web;
+  - API con token de dev-auth;
+  - búsqueda;
+  - Swagger con la URL pública;
+  - 16 tablas en PostgreSQL;
+  - compra y panel admin desde la web pública.
+- **Documentación:** `DESPLIEGUE_AZURE.md` (URLs, aviso del paso 2.5, registros de aplicación, problemas frecuentes),
+  `CRITERIOS.md` (criterio 1 ✅, 9/9) y `README.md` (sección "En línea").
+
 ---
 
 ## 4. Plan de la versión 1 — ⏳ PENDIENTE DE APROBACIÓN

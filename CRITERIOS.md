@@ -14,7 +14,7 @@ La rúbrica es binaria (0 o 1 punto), así que **un 🟡 cuenta como riesgo de 0
 
 | # | Criterio | Estado | Evidencia principal | Qué falta |
 |---|----------|--------|---------------------|-----------|
-| 1 | Sistema desplegado y accesible públicamente en la nube **(obligatorio)** | ❌ | Funciona solo en local | Desplegar API, auth y web (HALLAZGOS NUBE-01…04) |
+| 1 | Sistema desplegado y accesible públicamente en la nube **(obligatorio)** | ✅ | **Azure**: web en Static Web Apps, API y dev-auth en App Service, PostgreSQL Flexible Server; despliegue automático con GitHub Actions | — |
 | 2 | Sistema de administración funcional (CRUD, gestión operativa, navegación) | ✅ | Panel `/admin`: **CRUD de rutas programadas y de la flota**, vuelos y asientos, estado de vuelo, pasajeros, flota, eventos, observabilidad | Que las rutas se guarden en la base de datos (criterio 5) |
 | 3 | Marketplace web funcional (consulta, publicación, flujo de venta) | ✅ | Búsqueda → tarifa → hold → pasajeros, asientos y maletas → pago → boleto → postventa → check-in | Ver la nota sobre "publicación" en el punto 3 |
 | 4 | APIs implementadas y documentadas con OpenAPI/Swagger | ✅ | 22 operaciones del contrato + extensiones, Swagger en `/docs`, guía `PRUEBASSW.md` | Que Swagger funcione también en la nube (NUBE-01) |
@@ -25,7 +25,7 @@ La rúbrica es binaria (0 o 1 punto), así que **un 🟡 cuenta como riesgo de 0
 | 9 | Documentación técnica mínima (arquitectura, modelo de datos, APIs) | ✅ | `ARQUITECTURA.md` (componentes, capas, secuencia de compra, **modelo de datos**), `EVENTOS.md`, Swagger, README, `PRUEBASSW.md` | Actualizar el modelo cuando existan las tablas reales |
 | 10 | Dominio del código en la defensa | — | Depende del estudiante | Estudiar la sección 4 de este archivo |
 
-**Conteo actual** (actualizado tras V1.M): 8 ✅, 0 🟡, 1 ❌ (el despliegue, en curso).
+**Conteo actual** (actualizado el 07/10, tras el despliegue en Azure): **9 ✅** de 9 criterios evaluables, más el 10, que es la defensa.
 
 **Para asegurar el puntaje:** falta cerrar los dos ❌, la **base de datos** y el **despliegue en la nube** (obligatorio). El plan está en la sección 3.
 
@@ -33,28 +33,38 @@ La rúbrica es binaria (0 o 1 punto), así que **un 🟡 cuenta como riesgo de 0
 
 ## 2. Detalle por criterio
 
-### Criterio 1 — Despliegue en la nube (obligatorio) · ❌ No cumple todavía
+### Criterio 1 — Despliegue en la nube (obligatorio) · ✅ Cumple (07/10)
 
-**Situación actual:** los tres procesos (API en el 3000, dev-auth en el 4000 y web en el 5173) corren solo en local. No hay URL pública.
+**URLs públicas:**
 
-**Lo que ya está preparado:**
-- **Configuración por variables de entorno:** `PORT`, `CORS_ORIGINS`, `TRUST_PROXY`, autenticación, límites. La API valida la configuración
-  al arrancar y no inicia si está incompleta.
-- **Modo producción:**
-  - exige un secreto JWT propio o un proveedor JWKS;
-  - activa HSTS;
-  - apaga Swagger salvo que se indique `SWAGGER_ENABLED=true`.
-- **Apagado ordenado** con SIGTERM, que necesitan plataformas como Render.
+| Componente | Servicio de Azure | URL |
+|------------|-------------------|-----|
+| Web (marketplace y panel admin) | Static Web Apps (Free) | https://nice-hill-090e19c10.1.azurestaticapps.net |
+| API y Swagger | App Service, Linux, Node 24, plan B1 | https://ecoairlines-api-gv-fjfaa7b5geg3hphs.brazilsouth-01.azurewebsites.net/docs |
+| dev-auth (login y registro) | App Service (mismo plan) | https://ecoairlines-auth-gv-fscaa6e6gqbcb7ew.brazilsouth-01.azurewebsites.net/health |
+| Base de datos | Azure Database for PostgreSQL Flexible Server (B1ms, Brazil South) | Privada: solo la usan la API y dev-auth |
 
-**Lo que falta** (detallado en HALLAZGOS, sección 3):
-- **NUBE-01:** que Swagger use la URL pública en "Try it out". Variable `PUBLIC_API_URL` y `SWAGGER_ENABLED=true`.
-- **NUBE-02:** persistencia; al reiniciar en Render se borra todo. Es el criterio 5.
-- **NUBE-03:** quién emite los tokens en la nube. dev-auth hoy se niega a arrancar en producción.
-- **NUBE-04:** configuración de despliegue: `Dockerfile` o `render.yaml`, *Root Directory* por servicio, `VITE_API_URL` y `VITE_AUTH_URL`
-  al compilar el frontend, y `CORS_ORIGINS` con la URL pública.
+**Cómo se despliega:** cada `push` a `main` ejecuta GitHub Actions y despliega solo la parte que cambió.
+- **Web:** compila con las URLs públicas.
+- **API:** tipos, lint, unitarias y e2e, y luego empaqueta las 4 capas.
+- **dev-auth:** despliega su carpeta.
 
-**Evidencia a presentar cuando se cumpla:** las URLs públicas de la web, de la API (`/docs`) y del servidor de autenticación, más una
-compra completa hecha desde la URL pública.
+Paso a paso y problemas frecuentes en `DESPLIEGUE_AZURE.md`.
+
+**Verificación en la nube (07/10):**
+- Iniciar sesión en dev-auth desde la web responde `200`, con CORS para la web.
+- Con ese token, la API responde `200` en "Mis reservas".
+- La búsqueda UIO → BOG devuelve ofertas.
+- Swagger publica la URL pública y el esquema de token.
+- En PostgreSQL, las 16 tablas se crearon solas, con 90 rutas, 149 aviones y los usuarios de prueba.
+- Una compra completa y el panel de administración se probaron desde la web pública.
+
+**Evidencia para la defensa:**
+1. Abrir la web.
+2. Comprar como `demo@ecoairlines.test`.
+3. Ver la reserva en el panel admin y en Observabilidad → Eventos.
+4. Reiniciar la API en el portal: la reserva sigue (PostgreSQL).
+5. En Swagger, `dev-auth` → `POST /login` → Authorize → cualquier endpoint.
 
 ---
 
@@ -254,8 +264,8 @@ No depende del repositorio sino del estudiante. La sección 4 resume cada parte 
 | 2 | **Eventos**: bus interno, webhooks firmados y `EVENTOS.md` | 8 | ✅ V1.K |
 | 3 | **`ARQUITECTURA.md`** con diagramas y modelo de datos; `AUDITORIA.md` histórica; README | 9 | ✅ V1.K |
 | 4 | **PostgreSQL**: tablas por dominio con `DATABASE_URL`, probado con Docker; dev-auth también persiste | 5 (y 1) | ✅ V1.M |
-| 5 | **Despliegue en Azure**: Static Web Apps (web), App Service (API y dev-auth), PostgreSQL Flexible Server; Swagger con URL pública; workflows de GitHub Actions | 1, 4 | ⏳ En curso: código y workflows listos (V1.M); faltan las variables corregidas y los secretos de publicación (`DESPLIEGUE_AZURE.md`) |
-| 6 | Auditoría de Gemini, pruebas con `PRUEBASSW.md`, commits y merge a `main` | Todos | ⏳ Cierre |
+| 5 | **Despliegue en Azure**: Static Web Apps (web), App Service (API y dev-auth), PostgreSQL Flexible Server; Swagger con URL pública; workflows de GitHub Actions | 1, 4 | ✅ 07/10 (ver criterio 1) |
+| 6 | Auditoría de Gemini, pruebas con `PRUEBASSW.md`, commits y merge a `main` | Todos | ✅ Código en `main` y desplegado; queda la nueva auditoría de Gemini sobre esta versión (opcional) |
 
 De las observaciones de `PRUEBASSW.md` §10:
 - **OBS-1** (URL de webhook sin esquema): resuelta en V1.K.
