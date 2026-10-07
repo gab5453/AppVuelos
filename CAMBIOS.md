@@ -803,6 +803,76 @@ Se decidió:
   - desde Swagger, `POST /login` de dev-auth respondió `200` con el token, y con contraseña incorrecta `401`;
   - en el panel se registró HC-J27 (A220, UIO) y se creó UIO ⇄ CUE eligiéndolo: "Ruta creada… con HC-J27".
 
+### V1.M — Cambio parte 13: PostgreSQL y preparación para Azure — ✅ IMPLEMENTADA (06/10, sin commit)
+
+**Origen:** pedido del supervisor (06/10): subir el proyecto a Azure con la web, la API, PostgreSQL y dev-auth
+(`DESPLIEGUE_AZURE.md`). También cierra el criterio 5 (base de datos) y los hallazgos NUBE-01 a NUBE-04.
+
+**1. PostgreSQL (criterio 5):**
+- **Tablas** (`DataAccess/src/database`):
+  - `PersistentTable` se usa como un `Map`: los repositorios no cambian y las lecturas son en memoria;
+  - con `DATABASE_URL`, cada `set`/`delete` se escribe en PostgreSQL, en orden, en `<esquema>.<tabla>` (`id text`, `data jsonb`,
+    `updated_at`);
+  - `DatabaseService` crea esquemas y tablas, carga las filas al arrancar, aplica los datos iniciales si la tabla está vacía y espera
+    las escrituras pendientes al apagar.
+  - Sin `DATABASE_URL`, todo sigue en memoria (desarrollo y pruebas).
+- **Esquemas:** un esquema por base de datos del diseño: `bookings`, `offers`, `post_sale`, `check_in`, `customers`, `flight_status`,
+  `webhooks`, `idempotency`, `schedule` (rutas y flota), más `gds` y `payment` para los sistemas externos simulados. En total
+  15 tablas.
+- **Sistemas simulados:** el GDS persiste cupos, asientos asignados y el inicio de la ocupación simulada, para que tras un reinicio
+  coincidan con las reservas. La Payment API persiste las referencias usadas. Al arrancar, `SchedulePublisher` vuelve a publicar
+  el horario guardado.
+- **Decisión:** cada agregado es un documento JSONB (reserva con pasajeros y boletos, hold con sus selecciones…). La memoria es
+  la copia de trabajo, así que la API corre como **una sola instancia**.
+- **Fechas:** `revive` convierte de nuevo a `Date` los campos de fecha que JSON guarda como texto (holds, cotizaciones,
+  idempotencia).
+- Driver: `pg` (sin ORM).
+
+**2. dev-auth en la nube:**
+- con `DATABASE_URL` guarda las cuentas en `auth.users` (se cargan al arrancar y cada registro se guarda antes de responder);
+- los usuarios de prueba tienen un `sub` fijo derivado del correo, así sus reservas siguen siendo suyas tras un reinicio;
+- `ADMIN_PASSWORD` cambia la clave del administrador;
+- en Azure (`WEBSITE_SITE_NAME`) se niega a arrancar sin un `AUTH_JWT_SECRET` propio de al menos 32 caracteres.
+
+**3. Swagger en la nube:**
+- con `PUBLIC_API_URL`, el overlay también funciona en producción: servidor público y esquema de token para Authorize;
+- el documento de dev-auth usa `DEV_AUTH_URL`, y la CSP de `/docs` admite esa URL;
+- ambas variables se validan al arrancar (http(s), y https en producción).
+
+**4. Web:** `public/staticwebapp.config.json`, para que una recarga en una ruta interna devuelva `index.html`, más cabeceras de
+seguridad.
+
+**5. GitHub Actions:**
+- `azure-static-web-apps-….yml`: compila con Node 24, lint y las URLs públicas (`VITE_*`), y sube `dist`.
+- `deploy-api.yml`:
+  - `npm ci`, tipos, lint, unitarias y e2e;
+  - `npm prune --omit=dev` y paquete con `node_modules` (enlaces de los workspaces copiados), el `dist` de las 4 capas y los
+    contratos;
+  - `azure/webapps-deploy`.
+- `deploy-auth.yml`: `npm ci --omit=dev` y despliegue de `dev-auth`.
+- Cada flujo corre solo si cambió su parte.
+
+**Verificación (06/10):**
+- Tipos ✅, lint ✅ (API y web), build ✅.
+- Unitarias **174/174** ✅ (+1: validación de `PUBLIC_API_URL` y `DEV_AUTH_URL`).
+- e2e **137/137** ✅ en memoria, más **`persistence.e2e-spec.ts`** con PostgreSQL 16 en Docker (`TEST_DATABASE_URL`):
+  - se crean avión, ruta, reserva con asiento, perfil y webhook;
+  - se apaga la API y se vuelve a levantar;
+  - todo sigue: la reserva, el asiento ocupado en el GDS, la ruta a la venta, el avión en servicio, el perfil, el webhook, y la
+    referencia de pago usada se rechaza.
+- **dev-auth con PostgreSQL:** un cliente registrado y el usuario de prueba inician sesión tras reiniciar con el **mismo `sub`**;
+  registrar el mismo correo responde `409`. Sin base sigue en memoria; en Azure sin secreto propio se niega a arrancar.
+- **Paquete de la API simulado como en GitHub Actions** (60 MB, sin TypeScript) y ejecutado con `NODE_ENV=production` y las
+  variables de Azure: conecta con PostgreSQL (15 tablas, 90 rutas y 149 aviones cargados), Swagger con la URL pública y token, CSP
+  con dev-auth, y la búsqueda responde.
+
+**Pendiente (del supervisor, en Azure):**
+- corregir `DATABASE_URL`;
+- `SCM_DO_BUILD_DURING_DEPLOYMENT=false`;
+- variables nuevas de dev-auth;
+- secretos de publicación en GitHub;
+- primera ejecución de los workflows.
+
 ---
 
 ## 4. Plan de la versión 1 — ⏳ PENDIENTE DE APROBACIÓN

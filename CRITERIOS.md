@@ -18,14 +18,14 @@ La rúbrica es binaria (0 o 1 punto), así que **un 🟡 cuenta como riesgo de 0
 | 2 | Sistema de administración funcional (CRUD, gestión operativa, navegación) | ✅ | Panel `/admin`: **CRUD de rutas programadas y de la flota**, vuelos y asientos, estado de vuelo, pasajeros, flota, eventos, observabilidad | Que las rutas se guarden en la base de datos (criterio 5) |
 | 3 | Marketplace web funcional (consulta, publicación, flujo de venta) | ✅ | Búsqueda → tarifa → hold → pasajeros, asientos y maletas → pago → boleto → postventa → check-in | Ver la nota sobre "publicación" en el punto 3 |
 | 4 | APIs implementadas y documentadas con OpenAPI/Swagger | ✅ | 22 operaciones del contrato + extensiones, Swagger en `/docs`, guía `PRUEBASSW.md` | Que Swagger funcione también en la nube (NUBE-01) |
-| 5 | Base de datos operativa | ❌ | Los datos viven **en memoria**; la estructura ya está separada en 8 contextos de datos | PostgreSQL real (HALLAZGOS NUBE-02 y PLT-03) |
+| 5 | Base de datos operativa | ✅ | **PostgreSQL** (`DATABASE_URL`): 15 tablas en 11 esquemas, uno por dominio; los datos sobreviven a un reinicio (prueba `persistence.e2e-spec.ts`). En Azure: Flexible Server | Confirmar la conexión en Azure al desplegar |
 | 6 | Diseño API-first y preparación para integración futura | ✅ | El contrato es la fuente de verdad y no se modifica; pruebas de conformidad; 4 capas y dominios aislados | — |
 | 7 | Contratos o endpoints identificados para interoperabilidad | ✅ | `vuelos-openapi.yaml`, `ecoairlines-extensions.yaml`, `HALLAZGOS.md` (26 hallazgos del contrato y EXT-01…04) | — |
 | 8 | Diseño preliminar de eventos o servicios (SOA/EDA) | ✅ | `EVENTOS.md`, bus interno `DomainEventBus`, 9 de los 12 eventos del contrato publicados, webhooks firmados con HMAC y reintentos | Persistir los eventos (*outbox*) y un broker al pasar a microservicios |
 | 9 | Documentación técnica mínima (arquitectura, modelo de datos, APIs) | ✅ | `ARQUITECTURA.md` (componentes, capas, secuencia de compra, **modelo de datos**), `EVENTOS.md`, Swagger, README, `PRUEBASSW.md` | Actualizar el modelo cuando existan las tablas reales |
 | 10 | Dominio del código en la defensa | — | Depende del estudiante | Estudiar la sección 4 de este archivo |
 
-**Conteo actual** (actualizado tras V1.K): 7 ✅, 0 🟡, 2 ❌.
+**Conteo actual** (actualizado tras V1.M): 8 ✅, 0 🟡, 1 ❌ (el despliegue, en curso).
 
 **Para asegurar el puntaje:** falta cerrar los dos ❌, la **base de datos** y el **despliegue en la nube** (obligatorio). El plan está en la sección 3.
 
@@ -132,25 +132,32 @@ PostgreSQL (criterio 5).
 
 ---
 
-### Criterio 5 — Base de datos operativa · ❌ No cumple todavía
+### Criterio 5 — Base de datos operativa · ✅ Cumple (V1.M)
 
-**Situación actual:** todo vive en memoria (`Map` dentro de los contextos de `EcoAirlines.DataAccess/src/context/`) y se pierde al
-reiniciar.
+**Cómo funciona:**
+- **Conexión.** Con `DATABASE_URL`, cada contexto de datos (`DataAccess/src/context`, equivalente a un `DbContext`) guarda sus tablas
+  en PostgreSQL. Las tablas se crean solas al arrancar y la primera vez se carga la red base (90 rutas y 149 aviones). Sin la variable,
+  todo sigue en memoria, que es lo que usan las pruebas.
+- **Un esquema por dominio**, que es la "base de datos por dominio" del diseño:
 
-**Lo que ya está preparado** (y conviene mostrar en la defensa):
-- **Un contexto de datos por base de datos futura** (equivalente a un `DbContext`): `bookings`, `offers`, `post-sale`, `check-in`,
-  `flight-status`, `customers`, `webhooks` e `idempotency`. Cada uno tiene un único dominio dueño.
-- **Patrón repositorio:** la lógica de negocio usa interfaces (`BookingRepository`, `HoldRepository`…) en `EcoAirlines.DataManagement/
-  src/interfaces`. Al cambiar a PostgreSQL solo cambian las implementaciones de `repositories/`; controllers, servicios y contrato no
-  se tocan.
-- **La prueba de arquitectura impide** que un dominio lea los datos de otro.
+  | Esquemas | Tablas |
+  |----------|--------|
+  | `bookings`, `offers`, `post_sale`, `check_in`, `customers`, `flight_status`, `webhooks`, `idempotency` | De cada dominio del contrato |
+  | `schedule` | Rutas y flota |
+  | `gds`, `payment` | Sistemas externos simulados |
+  | `auth` | Cuentas de dev-auth |
 
-**Para cumplir:**
-- PostgreSQL (la plantilla del grupo usa PostgreSQL + TypeORM; PLT-03), local con Docker y en la nube con una base gestionada (Render
-  PostgreSQL).
-- Persistir al menos reservas, holds, perfiles, estado de vuelo, webhooks y rutas programadas (las del CRUD del criterio 2).
-- Migraciones o creación automática de tablas.
-- Mantener las implementaciones en memoria para las pruebas.
+- **Formato.** Cada agregado se guarda como documento JSONB: la reserva con sus pasajeros y boletos; el hold con sus selecciones…
+- **Patrón repositorio intacto.** La lógica de negocio sigue usando las interfaces de `DataManagement`. Los repositorios no
+  cambiaron: las tablas (`PersistentTable`) se usan como un `Map` y escriben en la base cada cambio, en orden.
+- **Evidencia:** `EcoAirlines.API/test/persistence.e2e-spec.ts`, con PostgreSQL 16 en Docker.
+  - Crea reserva con asiento, perfil, webhook, avión y ruta.
+  - Apaga la API, la vuelve a levantar y comprueba que todo sigue ahí, incluido el asiento ocupado en el GDS.
+
+**Decisión a defender:** la memoria es la copia de trabajo y PostgreSQL la fuente durable.
+- Es simple y rápido, y no cambió ningún repositorio.
+- La API corre como **una sola instancia**.
+- Para escalar a varias instancias, los repositorios pasarían a consultar PostgreSQL directamente: las interfaces ya lo permiten.
 
 ---
 
@@ -246,8 +253,8 @@ No depende del repositorio sino del estudiante. La sección 4 resume cada parte 
 | 1 | **CRUD de rutas programadas** en el panel admin | 2, 3 | ✅ V1.K |
 | 2 | **Eventos**: bus interno, webhooks firmados y `EVENTOS.md` | 8 | ✅ V1.K |
 | 3 | **`ARQUITECTURA.md`** con diagramas y modelo de datos; `AUDITORIA.md` histórica; README | 9 | ✅ V1.K |
-| 4 | **PostgreSQL**: repositorios reales detrás de las interfaces existentes, Docker local y tablas (incluidas `scheduled_routes` y webhooks) | 5 (y 1) | ⏳ Siguiente. Sin base de datos, la nube pierde los datos en cada reinicio |
-| 5 | **Despliegue**: Render (API, dev-auth, web estática y PostgreSQL), Swagger con URL pública, CORS y secretos | 1, 4 | ⏳ Obligatorio |
+| 4 | **PostgreSQL**: tablas por dominio con `DATABASE_URL`, probado con Docker; dev-auth también persiste | 5 (y 1) | ✅ V1.M |
+| 5 | **Despliegue en Azure**: Static Web Apps (web), App Service (API y dev-auth), PostgreSQL Flexible Server; Swagger con URL pública; workflows de GitHub Actions | 1, 4 | ⏳ En curso: código y workflows listos (V1.M); faltan las variables corregidas y los secretos de publicación (`DESPLIEGUE_AZURE.md`) |
 | 6 | Auditoría de Gemini, pruebas con `PRUEBASSW.md`, commits y merge a `main` | Todos | ⏳ Cierre |
 
 De las observaciones de `PRUEBASSW.md` §10:

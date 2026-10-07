@@ -21,6 +21,8 @@ import {
   parseSegmentId,
 } from './gds-ids.js';
 import { stableHash } from '../../common/stable-hash.js';
+import { DatabaseService } from '../../database/database.service.js';
+import type { PersistentTable } from '../../database/persistent-table.js';
 import { AIRCRAFT, AIRLINE, FARE_BRANDS, TERMINALS, type AircraftType, type FareBrandDefinition } from '../../seed/network.js';
 import {
   DEFAULT_TIMETABLE,
@@ -131,9 +133,11 @@ const PASSENGER_FARE_FACTOR: Record<PassengerType, number> = { ADULT: 1, YOUTH: 
 @Injectable()
 export class MockGdsService {
   /** Cupos retenidos o vendidos por `segmentId|cabina`. */
-  private readonly reserved = new Map<string, number>();
+  private readonly reserved: PersistentTable<number>;
   /** Asientos asignados: segmentId → asiento → titular. */
-  private readonly assignedSeats = new Map<string, Map<string, string>>();
+  private readonly assignedSeats: PersistentTable<Record<string, string>>;
+  /** Datos sueltos del GDS que deben sobrevivir a un reinicio (inicio de la ocupación simulada). */
+  private readonly meta: PersistentTable<number>;
   private readonly seatLayoutCache = new Map<string, GdsSeat[]>();
   /** Carga simulada por segmento (0 = vuelo vacío); ver `isPreOccupied`. */
   private readonly demoLoadFactors = new Map<string, number>();
@@ -143,6 +147,17 @@ export class MockGdsService {
 
   /** Reloj reemplazable en pruebas. */
   now: () => number = () => Date.now();
+
+  /**
+   * El inventario (cupos y asientos asignados) es el estado del sistema externo: con `DATABASE_URL` se guarda en el esquema
+   * `gds` para que, tras un reinicio, coincida con las reservas guardadas. El horario se vuelve a publicar al arrancar desde
+   * las rutas programadas (ver `SchedulePublisher`).
+   */
+  constructor(db: DatabaseService = new DatabaseService()) {
+    this.reserved = db.table<number>({ schema: 'gds', name: 'inventory' });
+    this.assignedSeats = db.table<Record<string, string>>({ schema: 'gds', name: 'seats' });
+    this.meta = db.table<number>({ schema: 'gds', name: 'meta' });
+  }
 
   // ───────────────────────── segmentos e itinerarios ─────────────────────────
 
@@ -368,7 +383,7 @@ export class MockGdsService {
     return {
       cabinClass: seat.cabinClass,
       isAvailable: this.isSeatFree(segmentId, seatNumber),
-      holder: this.assignedSeats.get(segmentId)?.get(seatNumber),
+      holder: this.assignedSeats.get(segmentId)?.[seatNumber],
     };
   }
 
@@ -376,14 +391,16 @@ export class MockGdsService {
   assignSeat(segmentId: string, seatNumber: string, holder: string): boolean {
     const info = this.seatInfo(segmentId, seatNumber);
     if (!info || (!info.isAvailable && info.holder !== holder)) return false;
-    if (!this.assignedSeats.has(segmentId)) this.assignedSeats.set(segmentId, new Map());
-    this.assignedSeats.get(segmentId)!.set(seatNumber, holder);
+    this.assignedSeats.set(segmentId, { ...this.assignedSeats.get(segmentId), [seatNumber]: holder });
     return true;
   }
 
   releaseSeat(segmentId: string, seatNumber: string, holder: string): void {
     const seats = this.assignedSeats.get(segmentId);
-    if (seats?.get(seatNumber) === holder) seats.delete(seatNumber);
+    if (seats?.[seatNumber] === holder) {
+      const { [seatNumber]: _released, ...rest } = seats;
+      this.assignedSeats.set(segmentId, rest);
+    }
   }
 
   firstAvailableSeat(segmentId: string, cabinClass: string): string | undefined {
@@ -601,7 +618,10 @@ export class MockGdsService {
   private isPreOccupied(segmentId: string, seatNumber: string): boolean {
     let loadFactor = this.demoLoadFactors.get(segmentId);
     if (loadFactor === undefined) {
-      this.demoOccupancyUntil ??= this.now() + DEMO_OCCUPANCY_DAYS * 86_400_000;
+      if (this.demoOccupancyUntil === undefined) {
+        this.demoOccupancyUntil = this.meta.get('demoOccupancyUntil') ?? this.now() + DEMO_OCCUPANCY_DAYS * 86_400_000;
+        this.meta.set('demoOccupancyUntil', this.demoOccupancyUntil);
+      }
       const segment = this.resolveSegment(segmentId);
       loadFactor = segment && segment.departureUtc <= this.demoOccupancyUntil ? 20 + (stableHash(`load:${segmentId}`) % 30) : 0;
       this.demoLoadFactors.set(segmentId, loadFactor);
@@ -610,7 +630,7 @@ export class MockGdsService {
   }
 
   private isSeatFree(segmentId: string, seatNumber: string): boolean {
-    return !this.isPreOccupied(segmentId, seatNumber) && !this.assignedSeats.get(segmentId)?.has(seatNumber);
+    return !this.isPreOccupied(segmentId, seatNumber) && this.assignedSeats.get(segmentId)?.[seatNumber] === undefined;
   }
 }
 

@@ -56,7 +56,7 @@ export function applyDevOverlay(contract: OpenApiDocument, localServerUrl: strin
   const doc = structuredClone(contract);
 
   doc.servers = [
-    { url: localServerUrl, description: 'Local (desarrollo) — agregado por el overlay, no forma parte del contrato' },
+    { url: localServerUrl, description: `${serverLabel(localServerUrl)} — agregado por el overlay, no forma parte del contrato` },
     ...(doc.servers ?? []),
   ];
 
@@ -68,8 +68,8 @@ export function applyDevOverlay(contract: OpenApiDocument, localServerUrl: strin
       scheme: 'bearer',
       bearerFormat: 'JWT',
       description:
-        'Solo desarrollo. JWT firmado localmente: generar con `npm run token` y pegarlo aquí sin el prefijo "Bearer" ' +
-        '(el authorization server del contrato no está disponible en local).',
+        'JWT de acceso, pegado sin el prefijo "Bearer". Se obtiene con POST /login del documento "dev-auth" (selector de arriba) ' +
+        'o, en local, con `npm run token`. Es una alternativa al OAuth2 del contrato, cuyo authorization server todavía no existe.',
     },
   };
 
@@ -90,6 +90,11 @@ export function applyDevOverlay(contract: OpenApiDocument, localServerUrl: strin
   }
 
   return doc;
+}
+
+/** Nombre del servidor que agrega el overlay: local o la URL pública de la nube. */
+function serverLabel(url: string): string {
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(url) ? 'Local (desarrollo)' : 'Esta API (URL pública)';
 }
 
 export function isSwaggerEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -141,7 +146,7 @@ export function setupSwagger(app: INestApplication, options: SwaggerOptions): Op
   const extensions = loadExtensions(EXTENSIONS_PATH, contract);
   if (options.devOverlay) {
     extensions.servers = [
-      { url: options.localServerUrl, description: 'Local (desarrollo)' },
+      { url: options.localServerUrl, description: serverLabel(options.localServerUrl) },
       ...(extensions.servers ?? []),
     ];
   }
@@ -159,7 +164,7 @@ export function setupSwagger(app: INestApplication, options: SwaggerOptions): Op
   ];
   if (options.devOverlay && existsSync(DEV_AUTH_DOC_PATH)) {
     const devAuth = load(readFileSync(DEV_AUTH_DOC_PATH, 'utf8')) as OpenApiDocument;
-    devAuth.servers = [{ url: options.devAuthUrl ?? process.env.DEV_AUTH_URL ?? 'http://localhost:4000', description: 'dev-auth (desarrollo)' }];
+    devAuth.servers = [{ url: options.devAuthUrl ?? process.env.DEV_AUTH_URL ?? 'http://localhost:4000', description: 'dev-auth' }];
     http.get(DOCS_DEV_AUTH_JSON_PATH, (_req: Request, res: Response) => {
       res.json(devAuth);
     });

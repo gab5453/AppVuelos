@@ -9,8 +9,9 @@
 //   La respuesta incluye user { name, email, role }: CUSTOMER o ADMIN (campos de la plantilla del grupo).
 //   GET  /health                               → 200
 //
-// Sin dependencias: Node ≥ 20 (node:http, node:crypto).
-import { createHmac, randomUUID, scryptSync, timingSafeEqual, randomBytes } from 'node:crypto';
+// Node ≥ 20. Con DATABASE_URL las cuentas se guardan en PostgreSQL (tabla auth.users, driver "pg"); sin ella, en memoria.
+// Documento OpenAPI: openapi.yaml (lo publica el Swagger de la API en desarrollo y en la nube).
+import { createHash, createHmac, randomUUID, scryptSync, timingSafeEqual, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 
 if (process.env.NODE_ENV === 'production') {
@@ -19,7 +20,8 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // Deben coincidir con la configuración de la API (EcoAirlines.API/src/auth/auth.config.ts).
-const SECRET = process.env.AUTH_JWT_SECRET ?? 'vuelos-dev-only-secret-do-not-use-in-production-0001';
+const DEV_SECRET = 'vuelos-dev-only-secret-do-not-use-in-production-0001';
+const SECRET = process.env.AUTH_JWT_SECRET ?? DEV_SECRET;
 const ISSUER = process.env.AUTH_ISSUER ?? 'vuelos-dev-auth';
 const AUDIENCE = process.env.AUTH_AUDIENCE ?? 'vuelos-api';
 const PORT = Number(process.env.PORT ?? 4000);
@@ -35,28 +37,71 @@ const CUSTOMER_SCOPES = 'flights:read flights:hold flights:book flights:cancel e
 const ADMIN_SCOPES = 'flights:read flights:webhooks ecoairlines:admin';
 const SCOPES_BY_ROLE = { CUSTOMER: CUSTOMER_SCOPES, ADMIN: ADMIN_SCOPES };
 const MAX_BODY_BYTES = 10 * 1024;
+const DATABASE_URL = process.env.DATABASE_URL?.trim() || undefined;
+
+// En Azure App Service (WEBSITE_SITE_NAME) es un servicio público: exige un secreto propio, el mismo que usa la API.
+if (process.env.WEBSITE_SITE_NAME && (SECRET === DEV_SECRET || SECRET.length < 32)) {
+  console.error('dev-auth en la nube necesita AUTH_JWT_SECRET propio (≥ 32 caracteres, el mismo que la API).');
+  process.exit(1);
+}
 const LOGIN_ATTEMPTS_PER_MINUTE = 10;
 
-/** Usuarios en memoria (se pierden al reiniciar), con contraseña derivada con scrypt + salt. */
+/**
+ * Usuarios por correo, con contraseña derivada con scrypt + salt. Con DATABASE_URL se cargan al arrancar desde
+ * PostgreSQL (auth.users) y cada alta se guarda antes de responder; sin ella viven en memoria y se pierden al reiniciar.
+ */
 const users = new Map();
 const attempts = new Map();
+let pool;
 
 function hashPassword(password, salt = randomBytes(16).toString('hex')) {
   return { salt, hash: scryptSync(password, salt, 64).toString('hex') };
 }
 
-function addUser(name, email, password, role = 'CUSTOMER') {
-  const user = { sub: randomUUID(), name, email, role, ...hashPassword(password) };
-  users.set(email, user);
+/** `sub` fijo para los usuarios de prueba (derivado del correo): sus reservas siguen siendo suyas tras un reinicio. */
+function seedSub(email) {
+  const hex = createHash('sha256').update(`ecoairlines-seed:${email}`).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+async function saveUser(user) {
+  users.set(user.email, user);
+  if (pool) {
+    await pool.query(
+      'INSERT INTO auth.users (id, data, updated_at) VALUES ($1, $2::jsonb, now()) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()',
+      [user.email, JSON.stringify(user)],
+    );
+  }
   return user;
 }
 
-// Tres clientes de prueba (solo desarrollo), para probar reservas, asientos y aislamiento entre clientes.
-addUser('Usuario Demo', 'demo@ecoairlines.test', 'EcoDemo2026');
-addUser('María Torres', 'maria@ecoairlines.test', 'EcoMaria2026');
-addUser('Luis Andrade', 'luis@ecoairlines.test', 'EcoLuis2026');
-// Solo desarrollo. Las cuentas creadas con /register son siempre CUSTOMER: nadie puede registrarse como ADMIN.
-addUser('Administrador de Operaciones EcoAirlines', 'admin@ecoairlines.test', 'EcoAdmin2026', 'ADMIN');
+function addUser(name, email, password, role = 'CUSTOMER', sub = randomUUID()) {
+  return saveUser({ sub, name, email, role, ...hashPassword(password) });
+}
+
+/**
+ * Usuarios de prueba (se vuelven a escribir en cada arranque: si cambia ADMIN_PASSWORD, cambia la clave). Tres clientes, para
+ * probar reservas, asientos y aislamiento, y el administrador. Las cuentas creadas con /register son siempre CUSTOMER: nadie
+ * puede registrarse como ADMIN. En la nube conviene definir ADMIN_PASSWORD: la clave por defecto está en el repositorio.
+ */
+const SEED_USERS = [
+  ['Usuario Demo', 'demo@ecoairlines.test', 'EcoDemo2026', 'CUSTOMER'],
+  ['María Torres', 'maria@ecoairlines.test', 'EcoMaria2026', 'CUSTOMER'],
+  ['Luis Andrade', 'luis@ecoairlines.test', 'EcoLuis2026', 'CUSTOMER'],
+  ['Administrador de Operaciones EcoAirlines', 'admin@ecoairlines.test', process.env.ADMIN_PASSWORD || 'EcoAdmin2026', 'ADMIN'],
+];
+
+async function initStore() {
+  if (DATABASE_URL) {
+    const { default: pg } = await import('pg');
+    pool = new pg.Pool({ connectionString: DATABASE_URL, max: 3, connectionTimeoutMillis: 10_000 });
+    await pool.query('CREATE SCHEMA IF NOT EXISTS auth');
+    await pool.query('CREATE TABLE IF NOT EXISTS auth.users (id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())');
+    const { rows } = await pool.query('SELECT data FROM auth.users');
+    for (const { data } of rows) users.set(data.email, data);
+  }
+  for (const [name, email, password, role] of SEED_USERS) await addUser(name, email, password, role, seedSub(email));
+}
 
 const base64url = (value) => Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)).toString('base64url');
 
@@ -164,7 +209,7 @@ async function handle(req, res) {
       return problem(res, 400, 'Nombre requerido, correo válido y contraseña de 8 a 128 caracteres.');
     }
     if (users.has(email)) return problem(res, 409, 'Ya existe una cuenta con ese correo.');
-    return send(res, 201, issueToken(addUser(name, email, password)));
+    return send(res, 201, issueToken(await addUser(name, email, password)));
   }
 
   const user = users.get(email);
@@ -175,8 +220,13 @@ async function handle(req, res) {
   return send(res, 200, issueToken(user));
 }
 
+await initStore();
 createServer((req, res) => {
   handle(req, res).catch(() => problem(res, 500, 'Internal Server Error'));
 }).listen(PORT, () => {
-  console.log(`dev-auth escuchando en http://localhost:${PORT} (solo desarrollo). Clientes: demo@ecoairlines.test / EcoDemo2026, maria@ecoairlines.test / EcoMaria2026, luis@ecoairlines.test / EcoLuis2026; administrador: admin@ecoairlines.test / EcoAdmin2026`);
+  console.log(
+    `dev-auth escuchando en el puerto ${PORT} (${pool ? 'cuentas en PostgreSQL' : 'cuentas en memoria'}). Clientes: demo@ecoairlines.test / EcoDemo2026, ` +
+      `maria@ecoairlines.test / EcoMaria2026, luis@ecoairlines.test / EcoLuis2026; administrador: admin@ecoairlines.test` +
+      (process.env.ADMIN_PASSWORD ? ' (clave en ADMIN_PASSWORD)' : ' / EcoAdmin2026'),
+  );
 });

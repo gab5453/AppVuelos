@@ -35,6 +35,21 @@ describe('validateEnvironment', () => {
     ]);
   });
 
+  it('valida las URLs públicas de Swagger: deben ser http(s) y, en producción, https', () => {
+    expect(validateEnvironment({ PUBLIC_API_URL: 'http://localhost:3000', DEV_AUTH_URL: 'http://localhost:4000' })).toEqual([]);
+    expect(validateEnvironment({ PUBLIC_API_URL: 'no-es-url' })).toEqual(['PUBLIC_API_URL debe ser una URL http(s) válida.']);
+    expect(
+      validateEnvironment({
+        NODE_ENV: 'production',
+        AUTH_JWT_SECRET: 'a-real-production-secret-with-enough-length-123',
+        AUTH_ISSUER: 'ecoairlines-auth',
+        AUTH_AUDIENCE: 'ecoairlines-api',
+        PUBLIC_API_URL: 'https://ecoairlines-api.azurewebsites.net',
+        DEV_AUTH_URL: 'http://ecoairlines-auth.azurewebsites.net',
+      }),
+    ).toEqual(['DEV_AUTH_URL debe usar https en producción.']);
+  });
+
   it('rechaza un NODE_ENV desconocido', () => {
     expect(validateEnvironment({ NODE_ENV: 'prod' })).toEqual([expect.stringContaining('NODE_ENV')]);
   });

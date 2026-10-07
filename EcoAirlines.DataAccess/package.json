@@ -9,6 +9,10 @@
     "./*": "./dist/*"
   },
   "dependencies": {
-    "@nestjs/common": "^12.0.1"
+    "@nestjs/common": "^12.0.1",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
   }
 }

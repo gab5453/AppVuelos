@@ -103,7 +103,7 @@ describe('Swagger / contrato (e2e)', () => {
     it('publica el documento de dev-auth (otro servicio) apuntando a su URL, y la CSP de /docs permite llamarlo', async () => {
       const { body } = await request(app.getHttpServer()).get(DOCS_DEV_AUTH_JSON_PATH).expect(200);
       expect(Object.keys(body.paths).sort()).toEqual(['/health', '/login', '/register']);
-      expect(body.servers).toEqual([{ url: 'http://localhost:4000', description: 'dev-auth (desarrollo)' }]);
+      expect(body.servers).toEqual([{ url: 'http://localhost:4000', description: 'dev-auth' }]);
       const docs = await request(app.getHttpServer()).get(`${DOCS_PATH}/`).expect(200);
       expect(docs.headers['content-security-policy']).toContain("connect-src 'self' http://localhost:4000");
       const init = await request(app.getHttpServer()).get(`${DOCS_PATH}/swagger-ui-init.js`).expect(200);

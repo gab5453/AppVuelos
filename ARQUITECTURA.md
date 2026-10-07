@@ -42,7 +42,7 @@ flowchart LR
     PAY[(Payment API<br/>referencias de pago)]
   end
 
-  DB[("Datos por dominio<br/>hoy en memoria · destino: PostgreSQL")]
+  DB[("PostgreSQL<br/>un esquema por dominio")]
   SUB[Suscriptores de webhooks]
 
   U --> UI
@@ -63,7 +63,7 @@ flowchart LR
 | API EcoAirlines | NestJS 12, Node 24, TypeScript | Implementa las 22 operaciones del contrato y las extensiones propias |
 | GDS simulado | `MockGdsService` | Horario publicado, búsqueda, precios, cupos, asientos, estado de vuelo |
 | Payment API simulada | `MockPaymentApiService` | Verifica referencias de pago (aprobado, pendiente o rechazado). La API nunca ve tarjetas |
-| Datos | Contextos de datos en memoria | Un contexto por base de datos futura (sección 5) |
+| Datos | PostgreSQL (Azure Database for PostgreSQL Flexible Server) | Un esquema por dominio; sin `DATABASE_URL`, en memoria (desarrollo y pruebas). Ver sección 5 |
 | Webhooks | `HttpWebhookDispatcherGateway` | Entrega los eventos a los sistemas suscritos (sección 6) |
 
 ---
@@ -190,9 +190,15 @@ flowchart LR
 
 ## 5. Modelo de datos
 
-**Estado actual:** los datos viven en memoria, en un **contexto de datos por dominio** (`DataAccess/src/context`). Cada contexto
-equivale a una **base de datos futura**, y su dominio es el único que la usa. El diagrama muestra el **modelo relacional objetivo**
-(PostgreSQL).
+**Cómo se guarda hoy (V1.M):** cada **contexto de datos** (`DataAccess/src/context`, equivalente a un `DbContext`) es una base de
+datos del diseño, y su dominio es el único que la usa. Con `DATABASE_URL`, cada contexto es un **esquema de PostgreSQL**:
+- cada **agregado** es una fila con su documento **JSONB** (`id`, `data`, `updated_at`);
+- las tablas se crean solas al arrancar y se cargan en memoria;
+- cada cambio se escribe en la base, en orden;
+- sin la variable, todo queda en memoria (desarrollo y pruebas).
+
+El diagrama muestra el **modelo lógico**: las entidades y relaciones que contienen esos documentos. Es también el destino si más
+adelante se normalizan las tablas.
 
 - **Dentro de un contexto:** relaciones normales con claves foráneas.
 - **Entre contextos:** solo referencias por id (líneas punteadas). No hay claves foráneas entre bases distintas, para poder separar
@@ -391,7 +397,7 @@ erDiagram
   CHECK_IN }o..|| BOOKING : "registra"
 ```
 
-| Base de datos futura | Contexto actual | Dominio dueño | Tablas |
+| Base de datos (esquema) | Contexto | Dominio dueño | Entidades |
 |----------------------|-----------------|---------------|--------|
 | `bookings` | `BookingsDataContext` | bookings | BOOKING, PASSENGER, SEAT_ASSIGNMENT, EXTRA_BAGGAGE, PURCHASED_FARE, TICKET, TICKET_COUPON, BOOKING_CHANGE |
 | `offers` | `OffersDataContext` | offers | HOLD, HOLD_SELECTION |
@@ -406,8 +412,30 @@ erDiagram
 **Datos que no son nuestros:** el inventario (cupos y asientos) vive en el **GDS** y los pagos en la **Payment API**. Son sistemas
 externos: la API los consulta mediante gateways y no los copia en sus tablas.
 
-**Paso a PostgreSQL:** se reemplazan las implementaciones de `DataManagement/src/repositories` por repositorios con TypeORM, el mismo
-ORM de la plantilla del grupo. Las interfaces, los servicios, los controllers y el contrato no cambian.
+**Tablas físicas en PostgreSQL** (cada una con `id text PRIMARY KEY`, `data jsonb`, `updated_at`):
+
+| Esquema | Tablas | Contenido de cada fila |
+|---------|--------|------------------------|
+| `bookings` | `bookings` | Reserva completa: pasajeros, asientos, maletas, boletos, historial, tarifas |
+| `offers` | `holds` | Hold con sus selecciones y precio bloqueado |
+| `post_sale` | `cancellation_quotes`, `date_change_offers` | Cotización u oferta con su vencimiento |
+| `check_in` | `check_ins` | Asiento por segmento y pasajero de una reserva |
+| `customers` | `profiles` | Perfil del cliente (por `sub`) |
+| `flight_status` | `overrides` | Estado fijado por un administrador (vuelo + fecha) |
+| `webhooks` | `subscriptions` | Suscripción con sus eventos y secreto |
+| `idempotency` | `claims` | Respuesta guardada de una `Idempotency-Key` (24 h) |
+| `schedule` | `routes`, `aircraft` | Ruta programada con sus aviones; avión de la flota |
+| `gds` | `inventory`, `seats`, `meta` | Sistema externo simulado: cupos por segmento y cabina, asientos asignados |
+| `payment` | `used_references` | Sistema externo simulado: referencias de pago ya usadas |
+| `auth` | `users` | dev-auth: cuentas con contraseña derivada (scrypt) |
+
+**Por qué documentos JSONB:**
+- Los agregados del contrato (una reserva con pasajeros, boletos y asientos) se leen y escriben siempre completos.
+- Las relaciones entre dominios son solo referencias por id.
+- Los repositorios no cambiaron.
+
+**Límite y cómo crecer:** la memoria es la copia de trabajo, así que la API corre como **una instancia**. Para escalar a varias, los
+repositorios pasarían a consultar PostgreSQL directamente (o con TypeORM, como la plantilla), sin tocar servicios ni controllers.
 
 ---
 

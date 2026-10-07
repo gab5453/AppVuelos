@@ -35,9 +35,12 @@ async function bootstrap() {
   configureApp(app, loadSecurityConfig());
 
   if (isSwaggerEnabled()) {
+    // En la nube, PUBLIC_API_URL activa el mismo overlay con la URL pública: "Try it out" y Authorize funcionan desde Swagger.
+    const publicUrl = process.env.PUBLIC_API_URL?.trim().replace(/\/+$/, '') || undefined;
     setupSwagger(app, {
-      devOverlay: process.env.NODE_ENV !== 'production',
-      localServerUrl: `${httpsOptions ? 'https' : 'http'}://localhost:${port}`,
+      devOverlay: process.env.NODE_ENV !== 'production' || publicUrl !== undefined,
+      localServerUrl: publicUrl ?? `${httpsOptions ? 'https' : 'http'}://localhost:${port}`,
+      devAuthUrl: process.env.DEV_AUTH_URL?.trim().replace(/\/+$/, '') || undefined,
     });
   }
 

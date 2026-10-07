@@ -135,6 +135,8 @@ Se aplica en `src/app.setup.ts` (`configureApp`), que comparten `main.ts` y las 
 | `RATE_LIMIT_SEARCH_LIMIT` | `30` | Límite de `POST /search` |
 | `RATE_LIMIT_SEATMAP_LIMIT` | `60` | Límite de `GET /offers/{offerId}/seatmap` |
 | `HTTPS_KEY_PATH` / `HTTPS_CERT_PATH` | — | HTTPS en local (ambas juntas). En producción el TLS termina en el gateway |
+| `DATABASE_URL` | — (en memoria) | PostgreSQL (`postgres://usuario:clave@host:5432/base?sslmode=require`). Crea las tablas al arrancar, un esquema por dominio; ver `../ARQUITECTURA.md` §5 |
+| `PUBLIC_API_URL` | — | URL pública de la API: activa en producción Swagger con "Try it out" y Authorize (https obligatorio en producción) |
 
 ## Datos de prueba (GDS simulado)
 
@@ -220,6 +222,8 @@ npm run typecheck    # tipos de las 4 capas y de las pruebas
 npm run lint         # oxlint (las 4 capas, pruebas y scripts)
 npm test             # unitarias de las 4 capas + prueba de arquitectura
 npm run test:e2e     # e2e contra la app completa (misma configuración que main.ts)
+# Persistencia con un PostgreSQL real (p. ej. Docker: docker run -e POSTGRES_PASSWORD=clave -p 55432:5432 postgres:16-alpine):
+TEST_DATABASE_URL=postgres://postgres:clave@localhost:55432/postgres npm run test:e2e
 npm run build        # compila la solución en orden: DataAccess → DataManagement → Business → API
 ```
 

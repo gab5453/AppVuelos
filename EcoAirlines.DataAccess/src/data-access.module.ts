@@ -8,6 +8,7 @@ import { IdempotencyDataContext } from './context/idempotency.context.js';
 import { OffersDataContext } from './context/offers.context.js';
 import { PostSaleDataContext } from './context/post-sale.context.js';
 import { WebhooksDataContext } from './context/webhooks.context.js';
+import { DatabaseService } from './database/database.service.js';
 import { MockGdsService } from './external/gds/mock-gds.service.js';
 import { MockPaymentApiService } from './external/payment/mock-payment-api.service.js';
 
@@ -31,7 +32,7 @@ const DATA_CONTEXTS = [
  * Solo EcoAirlines.DataManagement usa estos proveedores.
  */
 @Module({
-  providers: [...DATA_CONTEXTS, MockGdsService, MockPaymentApiService],
-  exports: [...DATA_CONTEXTS, MockGdsService, MockPaymentApiService],
+  providers: [DatabaseService, ...DATA_CONTEXTS, MockGdsService, MockPaymentApiService],
+  exports: [DatabaseService, ...DATA_CONTEXTS, MockGdsService, MockPaymentApiService],
 })
 export class DataAccessModule {}

@@ -36,6 +36,19 @@ export function validateEnvironment(env: NodeJS.ProcessEnv = process.env): strin
     }
   }
 
+  for (const name of ['PUBLIC_API_URL', 'DEV_AUTH_URL']) {
+    const value = env[name];
+    if (value === undefined || value === '') continue;
+    let parsed: URL | undefined;
+    try {
+      parsed = new URL(value);
+    } catch {
+      parsed = undefined;
+    }
+    if (!parsed || !['http:', 'https:'].includes(parsed.protocol)) errors.push(`${name} debe ser una URL http(s) válida.`);
+    else if (env.NODE_ENV === 'production' && parsed.protocol !== 'https:') errors.push(`${name} debe usar https en producción.`);
+  }
+
   if (env.WEBHOOK_DELIVERY !== undefined && !['http', 'log'].includes(env.WEBHOOK_DELIVERY)) {
     errors.push('WEBHOOK_DELIVERY debe ser http o log.');
   }

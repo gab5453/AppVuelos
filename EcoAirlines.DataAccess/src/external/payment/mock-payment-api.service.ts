@@ -1,3 +1,5 @@
+import { DatabaseService } from '../../database/database.service.js';
+import type { PersistentTable } from '../../database/persistent-table.js';
 import { Injectable } from '@nestjs/common';
 import type { MoneyAmount } from '../../common/contract/common.types.js';
 
@@ -24,7 +26,12 @@ const REFERENCE_FORMAT = /^pay_[A-Za-z0-9_-]{3,64}$/;
  */
 @Injectable()
 export class MockPaymentApiService {
-  private readonly used = new Map<string, string>();
+  /** Referencias ya usadas (`referencia → operación`). Con `DATABASE_URL` se guardan en el esquema `payment`. */
+  private readonly used: PersistentTable<string>;
+
+  constructor(db: DatabaseService = new DatabaseService()) {
+    this.used = db.table<string>({ schema: 'payment', name: 'used_references' });
+  }
 
   verify(paymentReference: string, _amount: MoneyAmount): PaymentVerification {
     if (!REFERENCE_FORMAT.test(paymentReference) || this.used.has(paymentReference)) return 'INVALID';

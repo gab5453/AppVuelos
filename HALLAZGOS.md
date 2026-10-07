@@ -20,10 +20,10 @@
 | OPS-01 | ✅ | API vieja (02/10) ocupa el puerto 3000: `/docs` da 404 | Resuelto (05/10: ya no corre) | |
 | OPS-02 | ✅ | El frontend apunta por defecto al 3000 (la API vieja) | Resuelto con OPS-01 | |
 | OPS-03 | ✅ | Servicios de la sesión anterior siguen ocupando 3001, 4000 y 5173 | Resuelto (05/10: ya no corren) | |
-| NUBE-01 | 🔴 | Swagger no queda usable en la nube (apagado en producción y "Try it out" sin la URL pública) | Sí | |
-| NUBE-02 | 🔴 | Datos en memoria: en Render se pierden al reiniciar o "dormir" el servicio | Sí | |
-| NUBE-03 | 🔴 | `dev-auth` no arranca en producción y la API exige configuración de auth explícita | Sí | |
-| NUBE-04 | 🟠 | No hay `Dockerfile` ni configuración de Render; el repo es monorepo | No | |
+| NUBE-01 | ✅ | Swagger no queda usable en la nube (apagado en producción y "Try it out" sin la URL pública) | Resuelto (V1.M) | `SWAGGER_ENABLED=true` + `PUBLIC_API_URL` |
+| NUBE-02 | ✅ | Datos en memoria: se pierden al reiniciar el servicio | Resuelto (V1.M) | PostgreSQL con `DATABASE_URL` |
+| NUBE-03 | ✅ | `dev-auth` no arranca en producción y la API exige configuración de auth explícita | Resuelto (V1.M) | dev-auth desplegado aparte, con secreto compartido |
+| NUBE-04 | ✅ | Falta la configuración de despliegue; el repo es monorepo | Resuelto (V1.M) | GitHub Actions hacia Azure |
 | PLT-01 | 🔴 | Tres rutas base distintas: contrato `/flights/v1`, plantilla `/api/v1`, código en la raíz | **Sí** | |
 | PLT-02 | 🟠 | Swagger: la plantilla usa `/api/docs`, el código `/docs` | Sí | |
 | PLT-03 | 🟠 | La plantilla usa PostgreSQL + TypeORM; el código usa memoria | Sí (ver NUBE-02) | |
@@ -75,6 +75,15 @@
 ---
 
 ## 3. Despliegue en la nube — RDA1 (`NUBE`) *(nuevo)*
+
+> **Actualización V1.M (06/10):** la plataforma elegida es **Azure** (no Render). Los cuatro hallazgos están resueltos:
+> - **NUBE-01:** `PUBLIC_API_URL` activa en producción el overlay de Swagger con la URL pública y el token, y el documento de
+>   dev-auth.
+> - **NUBE-02:** PostgreSQL con `DATABASE_URL`, un esquema por dominio; dev-auth también guarda sus cuentas.
+> - **NUBE-03:** dev-auth corre como App Service aparte con `AUTH_JWT_SECRET` propio y `ADMIN_PASSWORD`.
+> - **NUBE-04:** workflows de GitHub Actions para la web, la API y dev-auth.
+>
+> Paso a paso en `DESPLIEGUE_AZURE.md`. El texto de abajo se conserva como registro del diagnóstico original.
 
 > RDA1: *"Cada equipo debe construir su aplicativo para que funcione de manera independiente y subir su API correspondiente a Render."*
 > El proyecto **funciona en local**, pero hoy **no queda listo para usarse en la nube** sin estos ajustes.
