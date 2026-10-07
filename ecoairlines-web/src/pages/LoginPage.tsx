@@ -71,9 +71,6 @@ export function LoginPage() {
         <button type="button" className="btn btn-link" onClick={() => setMode(mode === 'LOGIN' ? 'REGISTER' : 'LOGIN')}>
           {mode === 'LOGIN' ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Ingresa'}
         </button>
-        <p className="muted small">
-          Entorno de prueba: clientes <code>demo@ecoairlines.test</code> / <code>EcoDemo2026</code>, <code>maria@ecoairlines.test</code> / <code>EcoMaria2026</code> y <code>luis@ecoairlines.test</code> / <code>EcoLuis2026</code>; administrador <code>admin@ecoairlines.test</code> / <code>EcoAdmin2026</code>. Tu sesión dura 1 hora y se cierra al recargar la página.
-        </p>
       </form>
     </div>
   );
