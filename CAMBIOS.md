@@ -934,9 +934,8 @@ seguridad.
 - Verificado con las URLs públicas: Swagger y "Try it out", el recorrido completo en el navegador y CORS.
 - Las URLs están en el README.
 
-### V1.5 — Frontend en Vue — ⏳ No realizado (seguía pendiente de confirmación)
-- El frontend sigue en React: está completo, verificado y desplegado. Si se confirma la migración, se hace en una rama propia, como se
-  planeó.
+### V1.5 — Frontend en Vue — ❌ Cancelado (decisión del supervisor, 07/10)
+- El frontend se mantiene en React: está completo, verificado y desplegado.
 
 ### V1.6 — Mejoras opcionales — ✅ Parcialmente hecho
 - ✅ Emisión real de eventos de webhooks: V1.K (bus interno, 9 eventos, firma HMAC y reintentos).
