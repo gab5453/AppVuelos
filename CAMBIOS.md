@@ -1,9 +1,19 @@
 # CAMBIOS — AppVuelos (EcoAirlines)
 
-> **Versión 1 · actualizado el 2026-10-05.** Desde aquí comienza formalmente la **versión 1** de la página.
+> **Versión 1 · actualizado el 2026-10-07.** Desde aquí comienza formalmente la **versión 1** de la página.
 > Todo cambio se propone en este archivo, se aprueba y solo después se implementa. Lo que no esté aquí **no se hace**.
 > Marca cada fase con ✅ (aprobada), ❌ (rechazada) o ✏️ (aprobada con cambios).
 > El detalle de la versión 0 (fases 1 a 8, con resultados y desviaciones) está en git: `git show adb6c48:CAMBIOS.md`.
+>
+> **Estado al 07/10:** la versión 1 está **completa y en línea en Azure** (V1.N).
+
+| Versión | Contenido | Commit |
+|---------|-----------|--------|
+| V1.A | División de datos por dominio | `2630915` |
+| V1.C–V1.D | Arquitectura en 4 capas; cliente, administración y observabilidad | `40cf965` |
+| V1.E–V1.L | Horario de 91 días y por avión, panel admin, checkout de grupo, validación de pasajeros, CRUD de rutas y flota, eventos y webhooks, dev-auth en Swagger, documentación técnica | `b41b828` |
+| V1.M | PostgreSQL y preparación para Azure (workflows) | `2a8143e` |
+| V1.N | Despliegue en Azure en línea | `d3ada3d` |
 
 ---
 
@@ -11,7 +21,7 @@
 
 ### Requisitos del booking (fase RDA1)
 1. **Solo API REST**, tanto el backend como el frontend (el frontend consume únicamente REST). No se implementa gRPC ni GraphQL.
-2. **E-commerce de aerolínea por persona**, **desplegado en la nube** (Render, según la plantilla del booking).
+2. **E-commerce de aerolínea por persona**, **desplegado en la nube** (Render según la plantilla del booking; se desplegó en **Azure**, ver V1.N).
 3. **Funcionamiento individual primero:** en RDA1 no hay integración entre plataformas. Se sigue el contrato para que la integración
    de RDA2 sea simple.
 4. **El contrato no se modifica.** `contract/vuelos-openapi.yaml` es idéntico al de la plantilla. Las inconsistencias van a `HALLAZGOS.md`.
@@ -132,7 +142,7 @@ conformidad de cada respuesta con el contrato, así que el comportamiento HTTP n
   `CancelBookingRequest` no declara `additionalProperties: false`. Hoy se descartan en silencio, que es lo correcto según el contrato.
   **Recomiendo no aplicarlo** y registrarlo como respuesta a la auditoría.
 
-### V1.C — Cambio parte 3: arquitectura en 4 capas — ✅ IMPLEMENTADA (05/10, rama `feature/arquitectura-4-capas`, sin commit)
+### V1.C — Cambio parte 3: arquitectura en 4 capas — ✅ IMPLEMENTADA (05/10, commit `40cf965`)
 
 **Origen:** pedido del supervisor. Un compañero del grupo de vuelos compartió su plantilla (`APIVUELOSV1DIEGOCEVALLOS-main`, solución
 .NET 9). Se adopta una **estructura de 4 capas**, con el nombre EcoAirlines. No se copia su código: se reorganiza el nuestro.
@@ -232,7 +242,7 @@ siguen siendo válidas.
 
 **Pendiente:** auditoría de Gemini y supervisión del funcionamiento antes del commit, según el flujo de la versión 1.
 
-### V1.D — Cambio parte 4: módulos de cliente y administrador + observabilidad — ✅ IMPLEMENTADA (05/10, sin commit)
+### V1.D — Cambio parte 4: módulos de cliente y administrador + observabilidad — ✅ IMPLEMENTADA (05/10, commit `40cf965`)
 
 **Origen:** pedido del supervisor. El contrato no cubre la administración ni el perfil del cliente, así que se agregan **módulos propios,
 fuera del contrato**. Se toman los campos y las funciones de la plantilla del compañero (`APIVUELOSV1DIEGOCEVALLOS-main`), para tener la
@@ -307,7 +317,7 @@ Inspirada en el panel de Ejemplo 1 (rendimiento, errores, interacciones, entorno
 **Decisiones del supervisor (05/10):** ✅ aprobada. Módulo cliente = **perfil + cambio de asiento**. Las rutas propias quedan
 registradas en HALLAZGOS (**EXT-01 a EXT-03**), para acordarlas con el líder de booking antes de la integración (RDA2).
 
-#### 5. Resultado de la implementación (05/10) — ✅ IMPLEMENTADA, sin commit
+#### 5. Resultado de la implementación (05/10) — ✅ IMPLEMENTADA (commit `40cf965`)
 
 **Backend, capa por capa:**
 - **DataAccess:**
@@ -381,7 +391,7 @@ registradas en HALLAZGOS (**EXT-01 a EXT-03**), para acordarlas con el líder de
 
 ---
 
-### V1.E — Cambio parte 5: correcciones del frontend, horario de 91 días y horario de la flota — ✅ IMPLEMENTADA (06/10, sin commit)
+### V1.E — Cambio parte 5: correcciones del frontend, horario de 91 días y horario de la flota — ✅ IMPLEMENTADA (06/10, commit `b41b828`)
 
 **Origen:** revisión del supervisor (06/10), con capturas.
 
@@ -450,7 +460,7 @@ registradas en HALLAZGOS (**EXT-01 a EXT-03**), para acordarlas con el líder de
 - Rutas largas sin escala (por ejemplo Cuenca → Madrid o Santiago → Madrid) existen solo porque se pidieron todos con todos.
   Comercialmente se podrían limitar.
 
-### V1.F — Cambio parte 6: asientos vacíos, 3 clientes, horarios variados y filtro por aeropuerto — ✅ IMPLEMENTADA (06/10, sin commit)
+### V1.F — Cambio parte 6: asientos vacíos, 3 clientes, horarios variados y filtro por aeropuerto — ✅ IMPLEMENTADA (06/10, commit `b41b828`)
 
 **Origen:** pedido del supervisor (06/10). Reemplaza parte de V1.E: las olas fijas de horario y la flota de 100 aviones.
 
@@ -497,7 +507,7 @@ registradas en HALLAZGOS (**EXT-01 a EXT-03**), para acordarlas con el líder de
 - **Nota:** en el puerto 4000 quedó corriendo un `dev-auth` anterior (PID 27468, iniciado a las 13:00 del 06/10), que no detuve por
   no tener certeza de su origen. Hasta reiniciarlo, ese proceso no reconoce a los dos clientes nuevos.
 
-### V1.G — Cambio parte 7: panel admin por fecha, origen o ruta — ✅ IMPLEMENTADA (06/10, sin commit)
+### V1.G — Cambio parte 7: panel admin por fecha, origen o ruta — ✅ IMPLEMENTADA (06/10, commit `b41b828`)
 
 **Origen:** pedido del supervisor (06/10). Que el administrador vea cómo se reservan los asientos de los vuelos de cualquier día, por
 punto de origen o por ruta. Por defecto, el día en que abre el panel.
@@ -539,7 +549,7 @@ punto de origen o por ruta. Por defecto, el día en que abre el panel.
   - Al elegir 26/10 y Quito → Bogotá ve los 2 vuelos; el vuelo reservado aparece resaltado.
   - "Ver" muestra los pasajeros con su asiento.
 
-### V1.H — Cambio parte 8: horario semanal fijo por avión — ✅ IMPLEMENTADA (06/10, sin commit)
+### V1.H — Cambio parte 8: horario semanal fijo por avión — ✅ IMPLEMENTADA (06/10, commit `b41b828`)
 
 **Origen:** pedido del supervisor (06/10). Los vuelos se repetían cada semana, pero no el avión que los operaba. Ejemplo:
 - HC-W01 operaba EA116 UIO → MAD el martes 6/10 y EA216 LIM → MAD el martes 13/10.
@@ -574,7 +584,7 @@ que vuelven a su base, en lugar de encadenar vuelos libremente.
 - **API real:** HC-W01 (base UIO) hace EA281 MAD → UIO los martes 6/10, 13/10 y 29/12, y EA116 UIO → MAD los miércoles. HC-J01
   hace EA100 UIO → GYE 06:00 y EA121 GYE → UIO 14:30 todos los días.
 
-### V1.I — Cambio parte 9: asientos y equipaje del grupo en un solo panel — ✅ IMPLEMENTADA (06/10, sin commit)
+### V1.I — Cambio parte 9: asientos y equipaje del grupo en un solo panel — ✅ IMPLEMENTADA (06/10, commit `b41b828`)
 
 **Origen:** pedido del supervisor (06/10), con Avianca como referencia. Con varios pasajeros, elegir asientos y maletas era
 incómodo: cada pasajero tenía su propio mapa y sus propios selectores dentro de su formulario.
@@ -601,7 +611,7 @@ incómodo: cada pasajero tenía su propio mapa y sus propios selectores dentro d
   - 2 + 1 maletas suman $105; con "Mismo equipaje para todos los vuelos" suman $210, y el total a pagar se actualiza;
   - la vista móvil (390 px) apila la lista y el detalle sin desbordes.
 
-### V1.J — Cambio parte 10: documento único, edad según el tipo y columna de maletas — ✅ IMPLEMENTADA (06/10, sin commit)
+### V1.J — Cambio parte 10: documento único, edad según el tipo y columna de maletas — ✅ IMPLEMENTADA (06/10, commit `b41b828`)
 
 **Origen:** pedido del supervisor (06/10). Al reservar 5 pasajeros LIM → BOG, se aceptaron:
 - la misma cédula 5 veces;
@@ -643,7 +653,7 @@ Además, en "Mis viajes" la columna "Maletas extra" mostraba un número que se c
 - **Navegador:** 2 adultos con la cédula 1350519375 y uno nacido el 01/01/2026. Aparecen los dos errores bajo los campos y el
   calendario limita a los adultos hasta el 20/10/2011.
 
-### V1.K — Cambio parte 11: CRUD de rutas, eventos (SOA/EDA) y documentación técnica — ✅ IMPLEMENTADA (06/10, sin commit)
+### V1.K — Cambio parte 11: CRUD de rutas, eventos (SOA/EDA) y documentación técnica — ✅ IMPLEMENTADA (06/10, commit `b41b828`)
 
 **Origen:** pedido del supervisor (06/10), a partir de `CRITERIOS.md`. Hay que cerrar los criterios 2 (CRUD de administración), 8 (eventos)
 y 9 (documentación: arquitectura y modelo de datos).
@@ -729,7 +739,7 @@ y 9 (documentación: arquitectura y modelo de datos).
 - Despliegue (criterio 1).
 - Eventos `hold.expired`, `booking.failed` y `booking.ticket_failed`: diseñados en `EVENTOS.md`.
 
-### V1.L — Cambio parte 12: dev-auth desde Swagger y CRUD de la flota — ✅ IMPLEMENTADA (06/10, sin commit)
+### V1.L — Cambio parte 12: dev-auth desde Swagger y CRUD de la flota — ✅ IMPLEMENTADA (06/10, commit `b41b828`)
 
 **Origen:** preguntas del supervisor (06/10):
 - dónde se guardan los clientes;
@@ -803,7 +813,7 @@ Se decidió:
   - desde Swagger, `POST /login` de dev-auth respondió `200` con el token, y con contraseña incorrecta `401`;
   - en el panel se registró HC-J27 (A220, UIO) y se creó UIO ⇄ CUE eligiéndolo: "Ruta creada… con HC-J27".
 
-### V1.M — Cambio parte 13: PostgreSQL y preparación para Azure — ✅ IMPLEMENTADA (06/10, sin commit)
+### V1.M — Cambio parte 13: PostgreSQL y preparación para Azure — ✅ IMPLEMENTADA (06/10, commit `2a8143e`)
 
 **Origen:** pedido del supervisor (06/10): subir el proyecto a Azure con la web, la API, PostgreSQL y dev-auth
 (`DESPLIEGUE_AZURE.md`). También cierra el criterio 5 (base de datos) y los hallazgos NUBE-01 a NUBE-04.
@@ -866,14 +876,9 @@ seguridad.
   variables de Azure: conecta con PostgreSQL (15 tablas, 90 rutas y 149 aviones cargados), Swagger con la URL pública y token, CSP
   con dev-auth, y la búsqueda responde.
 
-**Pendiente (del supervisor, en Azure):**
-- corregir `DATABASE_URL`;
-- `SCM_DO_BUILD_DURING_DEPLOYMENT=false`;
-- variables nuevas de dev-auth;
-- secretos de publicación en GitHub;
-- primera ejecución de los workflows.
+**Configuración en Azure:** hecha el 07/10 (ver V1.N).
 
-### V1.N — Despliegue en Azure — ✅ EN LÍNEA (07/10)
+### V1.N — Despliegue en Azure — ✅ EN LÍNEA (07/10, commit `d3ada3d`)
 
 - **Recursos** (Azure for Students, región Brazil South):
   - Static Web Apps (web);
@@ -899,50 +904,44 @@ seguridad.
 
 ---
 
-## 4. Plan de la versión 1 — ⏳ PENDIENTE DE APROBACIÓN
+## 4. Plan de la versión 1 — estado final (07/10)
 
-> Orden propuesto: primero que **se vea y funcione** (V1.0), luego lo que exige RDA1 para la nube (V1.1 a V1.4) y al final las mejoras (V1.5 y V1.6).
-> Cada fase se audita y se commitea por separado.
+> Plan original del 05/10, con lo que ocurrió con cada fase.
 
-### V1.0 — Saneamiento del entorno y la documentación
-*Resuelve OPS-01, OPS-03 y DOC-01. No toca código de la aplicación.*
-- Cerrar los procesos que ocupan los puertos (la API vieja en el 3000 y los servicios de la sesión anterior en 3001, 4000 y 5173), con tu autorización.
-- ✅ *Hecho en V1.C:* "25 operaciones" → **22** en `EcoAirlines.API/README.md` (antes `vuelos/README.md`).
-- ✅ *Hecho por el supervisor:* `vuelos/AGENTS.md` → `vuelos/GEMINI.md` (resuelve DOC-02) y la nueva `AUDITORIA.md` de Gemini en la raíz.
+### V1.0 — Saneamiento del entorno y la documentación — ✅ Hecho
+- Los procesos que ocupaban los puertos ya no corrían (OPS-01 y OPS-03 resueltos).
+- "25 operaciones" → **22** en `EcoAirlines.API/README.md` (V1.C).
+- `GEMINI.md` y la nueva `AUDITORIA.md` en la raíz, hechos por el supervisor (DOC-02).
 
-### V1.1 — Alineación con la plantilla y la ruta base
-*Requiere decidir PLT-01 y PLT-02 con el líder de booking.*
-- Prefijo global **configurable** (`API_PREFIX`). El valor por defecto será el que decida el líder: `/flights/v1` (contrato) o `/api/v1` (plantilla).
-- Ruta de Swagger acordada (`/api/docs` o `/docs`), sirviendo el YAML del contrato tal cual.
-- Ajustar el frontend, las pruebas e2e y los README a la nueva ruta. Las pruebas de conformidad garantizan que nada se rompa.
+### V1.1 — Alineación con la plantilla y la ruta base — ⏳ Pendiente de decisión del grupo
+- Sigue abierta (PLT-01, PLT-02): falta que el líder de booking decida el prefijo (`/flights/v1` o `/api/v1`) y la ruta de Swagger.
+- Cuando se decida: prefijo global configurable y ajuste del frontend, las pruebas y los README. Las pruebas de conformidad garantizan
+  que nada se rompa.
 
-### V1.2 — Persistencia en PostgreSQL
-*Resuelve NUBE-02 y PLT-03.*
-- TypeORM + PostgreSQL (`DATABASE_URL`), con `docker-compose.yml` para desarrollo local, como la plantilla.
-- Tras V1.C: cada contexto de `EcoAirlines.DataAccess` pasa a ser una conexión (una base de datos por dominio) y se agregan repositorios
-  PostgreSQL en `EcoAirlines.DataManagement` detrás de las interfaces existentes, con un `UnitOfWork` por base de datos. Business, los
-  controllers y el contrato no cambian.
-- Se mantienen los repositorios en memoria para las pruebas.
+### V1.2 — Persistencia en PostgreSQL — ✅ Hecho en V1.M (con cambios)
+- PostgreSQL con `DATABASE_URL`, como la plantilla, pero con el driver `pg` en lugar de TypeORM.
+- Cada contexto es un esquema y cada agregado un documento JSONB. Los repositorios no cambiaron (ver V1.M y PLT-03).
+- En las pruebas sigue el modo en memoria; una prueba e2e verifica la persistencia con PostgreSQL real.
 
-### V1.3 — Preparación del despliegue
-*Resuelve NUBE-01, NUBE-03 y NUBE-04.*
-- Swagger usable en la nube: servidor "Try it out" con la URL pública (`PUBLIC_API_URL`) y `SWAGGER_ENABLED` configurable. Sigue siendo un overlay en memoria; el contrato no cambia.
-- Autenticación en la nube según la decisión de NUBE-03: `dev-auth` desplegado con un secreto real, o el proveedor del booking.
-- `Dockerfile`/`render.yaml` para la API, `dev-auth` y el frontend estático, y una guía de variables de entorno por servicio.
+### V1.3 — Preparación del despliegue — ✅ Hecho en V1.M (con cambios)
+- **Swagger:** usable en la nube con `PUBLIC_API_URL` y `SWAGGER_ENABLED`, más el documento de dev-auth.
+- **Autenticación:** dev-auth desplegado aparte, con secreto propio y `ADMIN_PASSWORD` (NUBE-03).
+- **Despliegue:** GitHub Actions hacia Azure en lugar de `Dockerfile`/`render.yaml`. La guía de variables está en
+  `DESPLIEGUE_AZURE.md`.
 
-### V1.4 — Despliegue en Render y verificación en la nube
-- Desplegar la API, PostgreSQL, `dev-auth` y el frontend.
-- Verificar con las URLs públicas: Swagger y "Try it out", el recorrido completo en navegador y CORS.
-- Documentar las URLs en el README.
+### V1.4 — Despliegue y verificación en la nube — ✅ Hecho en V1.N (Azure en lugar de Render)
+- La API, PostgreSQL, dev-auth y la web están en línea en Azure.
+- Verificado con las URLs públicas: Swagger y "Try it out", el recorrido completo en el navegador y CORS.
+- Las URLs están en el README.
 
-### V1.5 — Frontend en Vue *(pendiente de confirmación)*
-- Migrar `ecoairlines-web/` de React a **Vue 3 + TypeScript + Vite + Vue Router + Pinia**, consumiendo solo REST.
-- Se reutilizan sin cambios la capa API, los tipos del contrato, las utilidades y los estilos. Se reescriben las páginas y componentes.
-- Se hace en una rama propia y reemplaza a React solo cuando pase la misma verificación en navegador.
+### V1.5 — Frontend en Vue — ⏳ No realizado (seguía pendiente de confirmación)
+- El frontend sigue en React: está completo, verificado y desplegado. Si se confirma la migración, se hace en una rama propia, como se
+  planeó.
 
-### V1.6 — Mejoras opcionales
-- Emisión real de eventos de webhooks (hoy el despachador es *noop*).
-- Resolver los `HALL` que el líder de booking decida (ver `HALLAZGOS.md`, sección 6).
+### V1.6 — Mejoras opcionales — ✅ Parcialmente hecho
+- ✅ Emisión real de eventos de webhooks: V1.K (bus interno, 9 eventos, firma HMAC y reintentos).
+- ⏳ Resolver los `HALL` que el líder de booking decida (`HALLAZGOS.md`, sección 6).
+- ⏳ Propuesta V1.B (servicios sin códigos HTTP, hallazgo HIGH de la auditoría): sigue pendiente de aprobación.
 
 ---
 

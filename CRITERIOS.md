@@ -100,8 +100,8 @@ Paso a paso y problemas frecuentes en `DESPLIEGUE_AZURE.md`.
 - **Editar o dar de baja.** Se rechaza si la ruta tiene cupos vendidos o retenidos (`409`): para esos vuelos se usa el estado operativo.
 - **Aviso a otros sistemas.** Cada cambio publica `flight.schedule_changed` (criterio 8).
 
-**Pendiente:** hoy las rutas se guardan en memoria (`AdminDataContext`, futura tabla `scheduled_routes`). Se conservarán al conectar
-PostgreSQL (criterio 5).
+**Persistencia:** las rutas y la flota se guardan en PostgreSQL, en el esquema `schedule` (tablas `routes` y `aircraft`). Al arrancar,
+la API vuelve a publicar el horario guardado, así las rutas creadas siguen a la venta después de un reinicio.
 
 ---
 
@@ -245,8 +245,11 @@ Están explicados en `EVENTOS.md`.
 | Decisiones y evolución | `CAMBIOS.md` (V1.A…V1.K), `HALLAZGOS.md`, `AUDITORIA.md` (marcada como histórica, con el estado de cada hallazgo) | ✅ |
 | Pruebas | `EcoAirlines.API/README.md` (sección Pruebas), `PRUEBASSW.md` | ✅ |
 
-Los 8 diagramas Mermaid se comprobaron dibujándolos. El modelo de datos describe el **destino relacional** (PostgreSQL) de los
-contextos que hoy están en memoria. Al conectar la base de datos se actualiza con las tablas reales.
+Los diagramas Mermaid se comprobaron dibujándolos. El modelo de datos muestra:
+- el **modelo lógico**: entidades y relaciones;
+- las **tablas físicas** de PostgreSQL: 16 tablas en 12 esquemas, con un documento JSONB por agregado.
+
+Además, la §8 cubre el despliegue en Azure.
 
 ---
 
@@ -278,12 +281,13 @@ De las observaciones de `PRUEBASSW.md` §10:
 ### 4.1 Visión general
 
 **AppVuelos / EcoAirlines** es la aerolínea ficticia del grupo de vuelos dentro de un ecosistema de reservas (booking hub). Tiene tres
-piezas:
+piezas, desplegadas en Azure y con PostgreSQL:
 
 ```
  Navegador ──► ecoairlines-web (React)  ──HTTP/JSON──►  API EcoAirlines (NestJS, 4 capas)  ──►  GDS y Payment API (simulados)
-                     │                                          ▲
-                     └──► dev-auth (emite JWT) ─────────────────┘  la API verifica la firma del token
+                     │                                          ▲            │
+                     └──► dev-auth (emite JWT) ─────────────────┘            └──► PostgreSQL (un esquema por dominio)
+                                    └──► PostgreSQL (auth.users)     la API verifica la firma del token
 ```
 
 - **API:** implementa el contrato `vuelos-openapi.yaml`. Es lo que consumirá el booking central.
@@ -294,8 +298,10 @@ piezas:
 - TypeScript estricto en todo el proyecto.
 - API: NestJS 12 sobre Node 24, con class-validator para los DTOs.
 - Web: React 19 + Vite 8.
+- Datos: PostgreSQL (driver `pg`).
 - Pruebas: Vitest y Supertest.
 - Lint: oxlint.
+- Nube: Azure (Static Web Apps, App Service, PostgreSQL Flexible Server) con despliegue continuo en GitHub Actions.
 
 ### 4.2 El contrato (`contract/`)
 
@@ -346,7 +352,10 @@ Solo se permiten dependencias explícitas, por ejemplo post-sale → bookings a 
   - `HoldRecord`: estado `HELD/RELEASED/EXPIRED/CONSUMED`, precio bloqueado y vencimiento.
   - `CustomerProfileRecord`, `FlightStatusOverride`, `WebhookSubscriptionRecord`, `IdempotencyRecord`, `StoredQuote` (cotizaciones y
     ofertas de cambio) y `CheckInRecord`.
-- **`context/`**: **un contexto por base de datos futura** (como un `DbContext`). Hoy son `Map` en memoria.
+- **`context/`**: **un contexto por dominio** (como un `DbContext`), cada uno con su esquema de PostgreSQL.
+- **`database/`**: `DatabaseService` y `PersistentTable`.
+  - Con `DATABASE_URL`, crean y cargan las tablas al arrancar y escriben cada cambio en orden.
+  - Sin la variable, las tablas funcionan en memoria (pruebas).
 - **`external/gds/mock-gds.service.ts`**: el **GDS simulado**, el sistema de reservas de la aerolínea.
   - Busca vuelos directos y con escala (1 a 10 h, sin rodeos mayores a 1,6 veces la distancia).
   - Calcula precios por familia tarifaria y tipo de pasajero, y lleva el inventario de asientos por vuelo.
@@ -377,7 +386,8 @@ Solo se permiten dependencias explícitas, por ejemplo post-sale → bookings a 
 #### `EcoAirlines.DataManagement` — patrón repositorio
 - **`interfaces/`**: contratos internos que usa la lógica de negocio. Por ejemplo, `BookingRepository` (`create`, `findById`,
   `findAllByOwner`…), `PaymentVerifierGateway` y `ReservationSystemGateway`.
-- **`repositories/`**: las implementaciones en memoria. **Son lo único que cambia con PostgreSQL.**
+- **`repositories/`**: las implementaciones, que usan las tablas del contexto como un `Map`. Al conectar PostgreSQL no cambiaron.
+  Para escalar a varias instancias, serían lo único que cambia (consultas directas a la base).
 - **`gateways/`**: adaptadores hacia el GDS, la Payment API y el despacho de webhooks.
 - Cada interfaz se registra con un *token* de inyección de dependencias de NestJS (`BOOKING_REPOSITORY`…), así que cambiar la
   implementación es cambiar una línea en `data-management.module.ts`.
@@ -442,8 +452,9 @@ Solo se permiten dependencias explícitas, por ejemplo post-sale → bookings a 
   - body de máximo 100 kb;
   - rechazo de `__proto__` y de propiedades extra donde el contrato dice `additionalProperties: false`.
 - **`observability/`**: métricas en memoria por ruta y status, latencias (media, p95) y errores recientes, para el panel admin.
-- **`docs/swagger.setup.ts`**: publica el contrato **tal cual** en `/docs`. En desarrollo agrega, solo en memoria, el servidor local y
-  el esquema `DevBearer`.
+- **`docs/swagger.setup.ts`**: publica el contrato **tal cual** en `/docs`.
+  - En desarrollo, y en la nube con `PUBLIC_API_URL`, agrega solo en memoria el servidor de la API y el esquema `DevBearer`.
+  - También agrega el documento de dev-auth para obtener el token.
 - **`config/validate-environment.ts`**: valida todas las variables al arrancar. En producción, sin la configuración segura, no arranca.
 
 ### 4.4 Flujo de una compra (para explicar con el código)
@@ -476,29 +487,34 @@ Solo se permiten dependencias explícitas, por ejemplo post-sale → bookings a 
 
 ### 4.6 dev-auth
 
-- Servidor mínimo de Node, sin dependencias, que **simula el proveedor OAuth2** del contrato. Ofrece `POST /register`, `POST /login` y
+- Servidor mínimo de Node (su única dependencia es el driver `pg`) que **simula el proveedor OAuth2** del contrato. Ofrece `POST /register`, `POST /login` y
   `GET /health`.
 - Las contraseñas se guardan con `scrypt` y se comparan en tiempo constante.
 - Emite JWT firmados (HS256) con los **scopes según el rol**: un cliente recibe `flights:*` y `ecoairlines:profile`; un administrador,
   `ecoairlines:admin`.
 - Está **fuera de la API a propósito**: la API solo verifica tokens. En producción se reemplaza por el proveedor real con `AUTH_JWKS_URL`
   sin tocar el código.
-- **Dónde se guardan las cuentas:** nombre, correo, contraseña derivada y rol viven en memoria de dev-auth. La API no las ve: conoce al
-  cliente solo por el `sub` del token, y guarda su perfil (`/customers/me`) y sus reservas en sus propios contextos de datos.
-- **Su documento OpenAPI** (`dev-auth/openapi.yaml`) aparece en el selector del Swagger de la API, solo en desarrollo.
+- **Dónde se guardan las cuentas:** nombre, correo, contraseña derivada y rol, en PostgreSQL (`auth.users`), propiedad de dev-auth.
+  - La API no las ve: conoce al cliente solo por el `sub` del token, y guarda su perfil (`/customers/me`) y sus reservas en sus propios
+    esquemas.
+  - Los usuarios de prueba tienen un `sub` fijo, así sus reservas siguen siendo suyas tras un reinicio.
+- **En la nube:** se niega a arrancar sin un secreto propio, y `ADMIN_PASSWORD` cambia la clave del administrador.
+- **Su documento OpenAPI** (`dev-auth/openapi.yaml`) aparece en el selector del Swagger de la API.
   - "Try it out" llama directamente a dev-auth (su CORS admite el origen de la API) y devuelve el token.
   - Es documentación, no una ruta de la API.
 
 ### 4.7 Pruebas
 
-- **173 unitarias:** reglas de pasajeros, horario y flota, GDS, pagos, JWT, configuración, Swagger, filtros de error. Más la **prueba de
-  arquitectura**.
-- **137 e2e** contra la aplicación completa:
+- **174 unitarias:** reglas de pasajeros, horario y flota, GDS, pagos, JWT, configuración, Swagger, filtros de error y bus de eventos.
+  Más la **prueba de arquitectura**.
+- **138 e2e** contra la aplicación completa:
   - conformidad de **cada respuesta** con el schema del contrato, incluidos `410` y `429` con el reloj adelantado;
   - flujo de compra, postventa, seguridad (cabeceras, CORS, límites, saneamiento), autenticación y propiedad de recursos;
-  - extensiones y regresiones de la auditoría.
+  - extensiones (rutas, flota, eventos y webhooks) y regresiones de la auditoría;
+  - **persistencia**: con `TEST_DATABASE_URL`, reinicia la API contra PostgreSQL y comprueba que los datos siguen.
 - **Comandos:** `npm run typecheck`, `npm run lint`, `npm test`, `npm run test:e2e`.
 - **Pruebas manuales:** `PRUEBASSW.md`.
+- **Antes de cada despliegue:** GitHub Actions corre tipos, lint, unitarias y e2e. Si algo falla, la API no se despliega.
 
 ### 4.8 Documentos del repositorio
 
@@ -510,7 +526,8 @@ Solo se permiten dependencias explícitas, por ejemplo post-sale → bookings a 
 | `HALLAZGOS.md` | Problemas detectados: entorno, nube, plantilla del grupo, extensiones y contrato |
 | `AUDITORIA.md` | Auditoría técnica de Gemini (rol de auditor) |
 | `PRUEBASSW.md` | Guía de pruebas manuales en Swagger |
-| `ARQUITECTURA.md` | Componentes, capas, flujo de compra, rutas programadas y modelo de datos, con diagramas Mermaid |
+| `ARQUITECTURA.md` | Componentes, capas, flujo de compra, rutas programadas, modelo de datos (lógico y tablas físicas) y despliegue, con diagramas Mermaid |
+| `DESPLIEGUE_AZURE.md` | Despliegue en Azure paso a paso, URLs públicas y problemas frecuentes |
 | `EVENTOS.md` | Catálogo de eventos, bus interno, webhooks firmados y evolución hacia un broker |
 | `CRITERIOS.md` | Este documento |
 | `CLAUDE.md` / `GEMINI.md` | Reglas de trabajo del programador y del auditor |
@@ -547,7 +564,7 @@ Solo se permiten dependencias explícitas, por ejemplo post-sale → bookings a 
 | ¿Qué hacen los webhooks? | Un sistema externo se suscribe a eventos (reserva confirmada, cancelada…) y recibe un POST en su URL, firmado con HMAC usando su `secret`, con hasta 3 intentos. Se ve en Observabilidad → "Eventos de dominio y webhooks" |
 | ¿Cómo sabe el receptor que el webhook es auténtico? | Recalcula `HMAC-SHA256(secret, "<t>.<cuerpo>")` y lo compara con `X-EcoAirlines-Signature`; rechaza marcas de tiempo viejas |
 | ¿Qué pasa si el suscriptor está caído? | Se reintenta ante `5xx`, `429` o error de red (3 intentos); la reserva no se ve afectada porque la entrega ocurre después de responder |
-| ¿Dónde se guardan los clientes? | La cuenta (correo y contraseña cifrada) en el servidor de autenticación (dev-auth, que simula al OAuth2 externo); el perfil y las reservas en la API, asociados al `sub` del token. Hoy todo en memoria; el destino es PostgreSQL |
+| ¿Dónde se guardan los clientes? | La cuenta (correo y contraseña cifrada) en el servidor de autenticación (dev-auth, que simula al OAuth2 externo); el perfil y las reservas en la API, asociados al `sub` del token. Todo en PostgreSQL (Azure), cada uno en su esquema |
 | ¿Por qué no se crea un cliente desde la API? | El contrato delega el registro y el login a un servidor OAuth2 externo; la API solo verifica tokens. En Swagger se usa el documento de dev-auth |
 | ¿Por qué los tipos de avión no se editan? | Definen el mapa de asientos, el alcance y el tiempo en tierra; cambiarlos rompería vuelos ya vendidos. Son datos maestros: se consultan |
 | ¿Cómo se crea una ruta nueva? | Panel → Rutas programadas → Nueva ruta. El servicio valida, `buildTimetable` asigna los aviones y comprueba que no haya conflictos, el GDS publica el horario y se emite `flight.schedule_changed` |

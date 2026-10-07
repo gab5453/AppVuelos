@@ -7,6 +7,11 @@
 >
 > **Para decidir con el líder de booking:** completar la columna *Decisión*. Las versiones anteriores de este archivo y de
 > `HALLAZGOS2.md` están en el historial de git (`git show adb6c48:HALLAZGOS.md`).
+>
+> **Estado al 07/10/2026:** el proyecto está **desplegado en Azure** (no en Render) con PostgreSQL (ver `DESPLIEGUE_AZURE.md`).
+> - **Resueltos:** los hallazgos de nube (NUBE-01 a 04) y el de persistencia (PLT-03).
+> - **Siguen abiertos**, porque requieren decisión del grupo o cambiar el contrato: la plantilla del booking (PLT-01, PLT-02), las
+>   extensiones (EXT-01 a 04) y los del contrato (HALL).
 
 **Estados:** 🔴 bloquea ver, usar o desplegar · 🟠 importante · 🟡 menor · ⚪ informativo · ✅ resuelto.
 **Prefijos:** `OPS` = entorno local · `NUBE` = despliegue RDA1 · `PLT` = plantilla del booking · `EXT` = extensiones fuera del contrato · `HALL` = contrato · `DOC` = documentación y proceso.
@@ -26,7 +31,7 @@
 | NUBE-04 | ✅ | Falta la configuración de despliegue; el repo es monorepo | Resuelto (V1.M) | GitHub Actions hacia Azure |
 | PLT-01 | 🔴 | Tres rutas base distintas: contrato `/flights/v1`, plantilla `/api/v1`, código en la raíz | **Sí** | |
 | PLT-02 | 🟠 | Swagger: la plantilla usa `/api/docs`, el código `/docs` | Sí | |
-| PLT-03 | 🟠 | La plantilla usa PostgreSQL + TypeORM; el código usa memoria | Sí (ver NUBE-02) | |
+| PLT-03 | ✅ | La plantilla usa PostgreSQL + TypeORM; el código usaba memoria | Resuelto (V1.M) | PostgreSQL con el driver `pg` (documentos JSONB por agregado), sin TypeORM |
 | PLT-04 | 🟡 | Los DTOs de la plantilla son más estrictos que el contrato | Informativo | |
 | PLT-05 | ⚪ | Entidad `Vuelo` y `CreateVueloDto` de la plantilla no existen en el contrato | Informativo | |
 | PLT-06 | ⚪ | Estructura interna distinta (un módulo frente a varios dominios) | Informativo | |
@@ -88,7 +93,7 @@
 > RDA1: *"Cada equipo debe construir su aplicativo para que funcione de manera independiente y subir su API correspondiente a Render."*
 > El proyecto **funciona en local**, pero hoy **no queda listo para usarse en la nube** sin estos ajustes.
 
-### NUBE-01 🔴 Swagger no es usable en la nube
+### NUBE-01 ✅ Swagger no es usable en la nube *(resuelto V1.M: `PUBLIC_API_URL` + `SWAGGER_ENABLED=true`)*
 - **Verificado en el código:**
   - `isSwaggerEnabled()` apaga `/docs` cuando `NODE_ENV=production` (`swagger.setup.ts:93`).
   - El servidor de "Try it out" se arma como `http://localhost:${port}` (`main.ts:40`), y el overlay solo existe fuera de producción (`main.ts:39`).
@@ -97,19 +102,19 @@
 - **Propuesta (fase V1.3):** URL pública configurable (p. ej. `PUBLIC_API_URL`) para el servidor de Swagger y `SWAGGER_ENABLED=true` en Render.
   **El contrato no cambia**: es el mismo overlay en memoria.
 
-### NUBE-02 🔴 Persistencia en memoria
+### NUBE-02 ✅ Persistencia en memoria *(resuelto V1.M: PostgreSQL con `DATABASE_URL`, un esquema por dominio)*
 - Holds, reservas, idempotencia, rate limiting, webhooks y usuarios de `dev-auth` viven en memoria.
 - **Impacto en Render:** el plan gratuito duerme el servicio tras inactividad, y cada reinicio o redeploy **borra todas las reservas**.
 - **Propuesta (fase V1.2):** PostgreSQL con TypeORM, como la plantilla (ver PLT-03). Los repositorios ya están detrás de *ports*, así que
   se cambian los adaptadores sin tocar controllers ni contrato.
 
-### NUBE-03 🔴 Autenticación en la nube
+### NUBE-03 ✅ Autenticación en la nube *(resuelto V1.M: dev-auth como App Service aparte, secreto propio y `ADMIN_PASSWORD`)*
 - `dev-auth/server.mjs:15` termina el proceso con `NODE_ENV=production`. La API en producción exige `AUTH_ISSUER`, `AUTH_AUDIENCE` y un
   `AUTH_JWT_SECRET` propio (≥ 32 caracteres, distinto al de desarrollo), o bien un `AUTH_JWKS_URL`.
 - **Decisión necesaria:** ¿quién emite tokens en la nube durante RDA1? Opciones: (a) desplegar `dev-auth` como servicio aparte con un
   secreto compartido real (habría que permitirle arrancar en la nube); (b) que el booking central provea el proveedor OAuth2.
 
-### NUBE-04 🟠 Falta la configuración de despliegue
+### NUBE-04 ✅ Falta la configuración de despliegue *(resuelto V1.M: workflows de GitHub Actions hacia Azure)*
 - No hay `Dockerfile`, `render.yaml` ni `.dockerignore` en el repo (la plantilla sí trae Docker para PostgreSQL).
 - Monorepo: en Render cada servicio necesita su *Root Directory*: `vuelos` (Web Service), `dev-auth` (Web Service) y `frontend`
   (Static Site, con `VITE_API_URL` y `VITE_AUTH_URL` definidos **al compilar**).
@@ -136,9 +141,13 @@
 - Plantilla: `/api/docs` (Swagger generado con decoradores `@nestjs/swagger`). Nuestro código: `/docs` (sirve el YAML del contrato tal cual).
 - Mantener el YAML original es más fiel al contrato. Solo hace falta acordar la ruta.
 
-### PLT-03 🟠 Persistencia
-- La plantilla trae `TypeOrmModule` con PostgreSQL (`DATABASE_URL`) y `docker-compose.yml` (postgres:16). Nuestro código usa repositorios
-  en memoria. Se resuelve junto con NUBE-02.
+### PLT-03 ✅ Persistencia *(resuelto V1.M)*
+- La plantilla trae `TypeOrmModule` con PostgreSQL (`DATABASE_URL`) y `docker-compose.yml` (postgres:16). Nuestro código usaba
+  repositorios en memoria.
+- **Resolución:** PostgreSQL con la misma variable `DATABASE_URL`.
+  - Cada contexto de datos es un esquema; cada agregado, un documento JSONB.
+  - Se usa el driver `pg` sin ORM, así los repositorios no cambiaron.
+  - Pasar a TypeORM, como la plantilla, solo cambiaría las implementaciones de `repositories/`. Ver `ARQUITECTURA.md` §5.
 
 ### PLT-04 🟡 Los DTOs de la plantilla no siguen al pie de la letra el contrato
 - Exigen campos que el contrato marca como **opcionales**: `CancelBookingRequest.reason`, y `DateChangeRequest.payment` y `assignedSeats`.

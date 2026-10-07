@@ -1,7 +1,10 @@
 # ARQUITECTURA — AppVuelos / EcoAirlines
 
-Documento técnico de la solución: componentes, capas, flujo de una compra, modelo de datos y eventos. Los diagramas están en
-**Mermaid**: GitHub (y VS Code con la extensión de Mermaid) los dibujan directamente.
+Documento técnico de la solución: componentes, capas, flujo de una compra, horario, modelo de datos, eventos, seguridad y despliegue.
+Los diagramas están en **Mermaid**: GitHub (y VS Code con la extensión de Mermaid) los dibujan directamente.
+
+**En línea:** web https://nice-hill-090e19c10.1.azurestaticapps.net · API y Swagger
+https://ecoairlines-api-gv-fjfaa7b5geg3hphs.brazilsouth-01.azurewebsites.net/docs
 
 | Documento relacionado | Contenido |
 |-----------------------|-----------|
@@ -10,6 +13,7 @@ Documento técnico de la solución: componentes, capas, flujo de una compra, mod
 | [`EVENTOS.md`](EVENTOS.md) | Catálogo y diseño de eventos (SOA/EDA) |
 | [`EcoAirlines.API/README.md`](EcoAirlines.API/README.md) | Detalle de configuración, seguridad y pruebas |
 | [`PRUEBASSW.md`](PRUEBASSW.md) | Guía de pruebas en Swagger |
+| [`DESPLIEGUE_AZURE.md`](DESPLIEGUE_AZURE.md) | Despliegue en Azure paso a paso |
 
 ---
 
@@ -59,7 +63,7 @@ flowchart LR
 | Componente | Tecnología | Responsabilidad |
 |------------|------------|-----------------|
 | `ecoairlines-web` | React 19, Vite 8, TypeScript | Marketplace (búsqueda, compra, postventa, check-in) y panel de administración |
-| `dev-auth` | Node sin dependencias | Simula el servidor OAuth2 del contrato: registro, login y JWT con scopes según el rol. Su documento OpenAPI (`dev-auth/openapi.yaml`) aparece en el selector de Swagger de la API, solo en desarrollo, para registrarse e iniciar sesión desde ahí |
+| `dev-auth` | Node (driver `pg`) | Simula el servidor OAuth2 del contrato: registro, login y JWT con scopes según el rol; cuentas en PostgreSQL (`auth.users`). Su documento OpenAPI (`dev-auth/openapi.yaml`) aparece en el selector de Swagger de la API para registrarse e iniciar sesión desde ahí |
 | API EcoAirlines | NestJS 12, Node 24, TypeScript | Implementa las 22 operaciones del contrato y las extensiones propias |
 | GDS simulado | `MockGdsService` | Horario publicado, búsqueda, precios, cupos, asientos, estado de vuelo |
 | Payment API simulada | `MockPaymentApiService` | Verifica referencias de pago (aprobado, pendiente o rechazado). La API nunca ve tarjetas |
@@ -83,7 +87,7 @@ flowchart TB
 |------|----------|---------|
 | API | `controllers/<dominio>`, `auth`, `middleware`, `interceptors`, `security`, `docs`, `observability` | `BookingsController` recibe `POST /bookings`, valida el DTO y decide `201` o `202` |
 | Business | `services/<dominio>`, `rules`, `dto`, `exceptions`, `common/events` | `BookingsService.create`: valida el hold, los pasajeros y el pago, y asigna asientos |
-| DataManagement | `interfaces/<dominio>`, `repositories/<dominio>`, `gateways/<dominio>` | `BookingRepository` (interfaz) y su implementación en memoria |
+| DataManagement | `interfaces/<dominio>`, `repositories/<dominio>`, `gateways/<dominio>` | `BookingRepository` (interfaz) y su implementación sobre la tabla del contexto `bookings` (PostgreSQL o memoria) |
 | DataAccess | `entities/<dominio>`, `context`, `external/gds`, `external/payment`, `seed` | `BookingRecord`, `BookingsDataContext`, `MockGdsService`, `timetable.ts` |
 
 ### Dominios
@@ -473,3 +477,27 @@ El catálogo completo de eventos, el formato, la firma, los reintentos y el cami
 | Trazabilidad | `X-Request-Id` en cada respuesta, log de acceso sin datos sensibles, observabilidad en `/admin/observability` |
 | Webhooks | URL anti-SSRF en producción (también al enviar), firma HMAC-SHA256 con el `secret` |
 | Configuración | Se valida completa al arrancar; en producción, sin la configuración segura, la API no inicia |
+
+---
+
+## 8. Despliegue (Azure)
+
+```mermaid
+flowchart LR
+  DEV[Push a main] --> GHA{{GitHub Actions}}
+  GHA -- "web cambió: build Node 24 + VITE_*" --> SWA["Static Web Apps<br/>ecoairlines-web"]
+  GHA -- "API cambió: tipos, lint, unitarias, e2e,<br/>paquete de las 4 capas" --> API["App Service B1<br/>ecoairlines-api-gv"]
+  GHA -- "dev-auth cambió" --> AUTH["App Service B1<br/>ecoairlines-auth-gv"]
+  API --> PG[("PostgreSQL Flexible Server<br/>ecoairlines-db-gv · base ecoairlines")]
+  AUTH --> PG
+```
+
+| Pieza | Servicio | Configuración clave |
+|-------|----------|---------------------|
+| Web | Static Web Apps (Free) | `VITE_API_URL` y `VITE_AUTH_URL` al compilar; `staticwebapp.config.json` (fallback a `index.html`) |
+| API | App Service Linux, Node 24, B1, Always On | `NODE_ENV=production`, secreto JWT propio, `DATABASE_URL`, `CORS_ORIGINS`, `TRUST_PROXY=1`, `SWAGGER_ENABLED`, `PUBLIC_API_URL`, `DEV_AUTH_URL`; inicio `node EcoAirlines.API/dist/main.js` |
+| dev-auth | App Service (mismo plan) | El mismo secreto, emisor y audiencia que la API; `DATABASE_URL`, `CORS_ORIGINS` (web y Swagger), `ADMIN_PASSWORD`; inicio `node server.mjs` |
+| Base de datos | PostgreSQL Flexible Server (Burstable B1ms) | Acceso desde servicios de Azure; las tablas se crean solas al arrancar |
+
+Los secretos viven solo en la configuración de Azure y en los secretos del repositorio (perfiles de publicación). Paso a paso en
+[`DESPLIEGUE_AZURE.md`](DESPLIEGUE_AZURE.md).

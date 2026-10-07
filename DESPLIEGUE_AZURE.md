@@ -222,14 +222,16 @@ Comando de inicio: `node server.mjs`. **No** definas `NODE_ENV` en dev-auth: con
 
 > **No hace falta definir `PORT`:** App Service lo define solo y la API y dev-auth ya lo leen.
 
-### Paso 7 — Pásame estos datos
+### Paso 7 — Datos para los workflows ✅
 
-Para terminar los workflows y la configuración necesito:
+Los workflows usan estos datos, ya configurados:
 
-- [ ] URL de la Static Web App.
-- [ ] Nombre exacto de la app de la API y de la de dev-auth.
-- [ ] Nombre del servidor PostgreSQL. **La contraseña no**: va solo en Azure.
-- [ ] Confirmar que pusiste las variables del paso 6.
+- [x] URL de la Static Web App (en `VITE_*` del workflow de la web).
+- [x] Nombre de las apps (`ecoairlines-api-gv` y `ecoairlines-auth-gv`, en `deploy-api.yml` y `deploy-auth.yml`).
+- [x] Servidor PostgreSQL (`ecoairlines-db-gv`). La contraseña va solo en `DATABASE_URL`, dentro de Azure.
+- [x] Variables del paso 6.
+
+> Si se recrea algún recurso con otro nombre, hay que actualizar esos tres archivos de `.github/workflows/`.
 
 ---
 
@@ -284,3 +286,17 @@ Para terminar los workflows y la configuración necesito:
 | Observabilidad muestra `GET (sin ruta) 404` sin que nadie use la web | **No es un error**: es la sonda de Azure al arrancar la app (`GET /robots933456.txt`) o alguien que abrió la raíz de la API (botón "Explorar"). La API no tiene rutas en `/` | Ninguna. Con los registros activados, la línea de acceso muestra el `path` exacto con el mismo `requestId` |
 | `/admin/...` responde 401 | Petición sin token o con token vencido (dura 1 h) | Iniciar sesión de nuevo. Un **cliente** recibe **403**, no 401 |
 | El administrador no puede entrar | Con `ADMIN_PASSWORD` definido en dev-auth, la clave ya no es `EcoAdmin2026` | Usar la clave de `ADMIN_PASSWORD` |
+
+---
+
+## 7. Mantenimiento y costos
+
+| Tarea | Cómo |
+|-------|------|
+| **Ahorrar crédito** después de la evaluación | PostgreSQL → **Detener** (se reactiva solo a los 7 días); App Service → **Detener** en las dos apps. Volver a **Iniciar** antes de la defensa |
+| **Cambiar la clave del administrador** | dev-auth → Variables de entorno → `ADMIN_PASSWORD` → Aplicar (la app se reinicia y la clave nueva queda guardada) |
+| **Cambiar el secreto de los tokens** | Generar uno nuevo (paso 5) y ponerlo **igual** en `AUTH_JWT_SECRET` de la API y de dev-auth. Las sesiones abiertas se cierran |
+| **Cambiar la contraseña de PostgreSQL** | Servidor → **Restablecer contraseña**, y actualizar `DATABASE_URL` en las dos apps |
+| **Ver por qué falla algo** | App → **Supervisión** → **Secuencia de registro** (con "Registro de aplicaciones" activado) |
+| **Volver a desplegar sin cambios** | GitHub → **Actions** → el workflow → **Run workflow** |
+| **Borrar todo** | Eliminar el grupo de recursos `rg-ecoairlines` (irreversible: borra también la base de datos) |

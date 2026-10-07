@@ -2,8 +2,10 @@
 
 Backend REST en NestJS que implementa el contrato **`../contract/vuelos-openapi.yaml`** (GDS Flight Core API v1.5.0.0):
 búsqueda, ofertas y holds, reservas y emisión, postventa (maletas, cambio de fecha, cancelación), check-in, estado de vuelo y webhooks.
-El contrato es la fuente de verdad y **no se modifica**; las inconsistencias detectadas están en `../HALLAZGOS.md` y el plan por fases
-en `../CAMBIOS.md`.
+El contrato es la fuente de verdad y **no se modifica**; las inconsistencias detectadas están en `../HALLAZGOS.md` y la bitácora de
+cambios en `../CAMBIOS.md`.
+
+**En línea:** https://ecoairlines-api-gv-fjfaa7b5geg3hphs.brazilsouth-01.azurewebsites.net/docs (Azure App Service, con PostgreSQL). Despliegue en `../DESPLIEGUE_AZURE.md`.
 
 ## Arquitectura en 4 capas
 
@@ -12,12 +14,15 @@ La solución se divide en 4 proyectos (workspaces npm), como una solución .NET 
 | Capa | Paquete | Contenido |
 |------|---------|-----------|
 | `EcoAirlines.API` | `@ecoairlines/api` | Controllers REST, autenticación JWT/OAuth2, seguridad HTTP, ProblemDetails, idempotencia, Swagger, `main.ts` |
-| `EcoAirlines.Business` | `@ecoairlines/business` | Services, `BookingsFacade`, DTOs del contrato, reglas de negocio, excepciones |
-| `EcoAirlines.DataManagement` | `@ecoairlines/data-management` | Interfaces de repositorios y gateways, repositorios en memoria, gateways al GDS y a la Payment API |
-| `EcoAirlines.DataAccess` | `@ecoairlines/data-access` | Entidades, un contexto de datos por base de datos futura, GDS y Payment API simulados, seed de la red |
+| `EcoAirlines.Business` | `@ecoairlines/business` | Services, `BookingsFacade`, DTOs del contrato, reglas de negocio, excepciones, bus de eventos (`common/events`) |
+| `EcoAirlines.DataManagement` | `@ecoairlines/data-management` | Interfaces de repositorios y gateways, repositorios, gateways al GDS, a la Payment API y a los webhooks |
+| `EcoAirlines.DataAccess` | `@ecoairlines/data-access` | Entidades, un contexto de datos por dominio (un esquema de PostgreSQL cada uno, `src/database`), GDS y Payment API simulados, horario |
 
-Dentro de cada capa los archivos se agrupan **por dominio** (search, offers, bookings, post-sale, check-in, flight-status, webhooks),
-para que cada dominio pueda separarse después como microservicio con su propia base de datos. La prueba
+Dentro de cada capa los archivos se agrupan **por dominio**:
+- del contrato: search, offers, bookings, post-sale, check-in, flight-status y webhooks;
+- extensiones: customers y admin.
+
+Así cada dominio puede separarse después como microservicio con su propia base de datos. La prueba
 `test/architecture.spec.ts` impide importar hacia una capa superior o acceder a los datos de otro dominio.
 
 ## Puesta en marcha
@@ -30,27 +35,33 @@ npm run start:dev      # compila las 4 capas en modo watch y reinicia la API (pu
 npm run build && npm start
 ```
 
-Para la página web completa se levantan tres procesos: esta API, `../dev-auth` (tokens de desarrollo) y `../ecoairlines-web`.
-Las instrucciones están en `../ecoairlines-web/README.md`.
+Para la página web completa se levantan tres procesos: esta API, `../dev-auth` (tokens) y `../ecoairlines-web`. Las instrucciones
+están en `../ecoairlines-web/README.md`.
+
+**Datos:** sin `DATABASE_URL`, todo vive en memoria y se reinicia con la API. Con `DATABASE_URL` (PostgreSQL), cada contexto de
+datos guarda sus tablas en un esquema propio: se crean solas al arrancar y la primera vez se carga la red base. Ver
+`../ARQUITECTURA.md` §5.
 
 ## Documentación interactiva (Swagger)
 
 Con la API levantada, abrir **http://localhost:3000/docs**. El documento crudo está en `/docs/openapi.json`.
 
 - Se publica el contrato `../contract/vuelos-openapi.yaml` **tal cual** (se lee en solo lectura; no se regenera desde el código).
-- Fuera de producción se aplica un overlay **solo en memoria** para poder usar "Try it out":
-  - el servidor local aparece primero en la lista de `servers`;
-  - el esquema `DevBearer` permite pegar un JWT de desarrollo en "Authorize", como alternativa al OAuth2 del contrato
-    (su authorization server no existe en local). Ver la sección siguiente para generarlo.
+- Fuera de producción, y en la nube cuando se define `PUBLIC_API_URL`, se aplica un overlay **solo en memoria** para poder usar
+  "Try it out":
+  - el servidor local o el público (`PUBLIC_API_URL`) aparece primero en la lista de `servers`;
+  - el esquema `DevBearer` permite pegar un JWT en "Authorize", como alternativa al OAuth2 del contrato (su authorization server
+    todavía no existe). El token se obtiene con el documento "dev-auth" o con `npm run token`.
 - En el selector de la parte superior aparece un segundo documento, **"Extensiones EcoAirlines"** (`/docs/extensions.json`), con los
   endpoints propios. Ver la sección siguiente.
-- Fuera de producción aparece un tercero, **"dev-auth: login y registro"** (`/docs/dev-auth.json`, desde `../dev-auth/openapi.yaml`):
+- Con el overlay aparece un tercero, **"dev-auth: login y registro"** (`/docs/dev-auth.json`, desde `../dev-auth/openapi.yaml`, en la
+  URL de `DEV_AUTH_URL`):
   - "Try it out" llama directamente a dev-auth (otro servicio), así se puede registrar un cliente o iniciar sesión (`200` y el token)
     sin salir de Swagger;
   - la API no gana rutas ni lógica de autenticación;
   - el CORS de dev-auth y la CSP de `/docs` admiten esa llamada.
 
-## Extensiones fuera del contrato (V1.D)
+## Extensiones fuera del contrato (V1.D–V1.L)
 
 Endpoints propios, documentados en `../contract/ecoairlines-extensions.yaml` con los campos de la plantilla del grupo de vuelos.
 El contrato no cambia. Al publicarlo, el anexo se combina en memoria con los schemas del contrato que referencia (`PassengerItem`,
@@ -72,7 +83,7 @@ El contrato no cambia. Al publicarlo, el anexo se combina en memoria con los sch
 | `GET /admin/observability` | `ecoairlines:admin` | Métricas HTTP en memoria: peticiones por patrón de ruta y status, latencias (media, p95, máx.), errores recientes con `X-Request-Id`, memoria y tiempo encendida. Nunca guarda headers, bodies, tokens ni query strings |
 
 Sin token responden `401`; con un token sin el scope, `403`. `npm run token` incluye los scopes propios; `dev-auth` los emite según el rol
-(administrador de desarrollo: `admin@ecoairlines.test` / `EcoAdmin2026`).
+(administrador: `admin@ecoairlines.test`, clave `EcoAdmin2026` en local; en la nube, la de `ADMIN_PASSWORD`).
 
 ## Autenticación (JWT)
 
@@ -93,7 +104,8 @@ npm run token -- --sub user-1 --scopes flights:read,flights:book --expires 2h
 Separar los scopes con comas, sin espacios (en Windows, `npm` altera los valores entre comillas con espacios).
 El token se pega en Swagger → Authorize → `DevBearer`, o se envía como `Authorization: Bearer <token>`.
 
-**Para el frontend** los tokens los emite `../dev-auth` (servidor de autenticación de desarrollo, separado de esta API; HALL-03):
+**Para el frontend** los tokens los emite `../dev-auth` (servidor de autenticación separado de esta API; HALL-03), que guarda sus
+cuentas en PostgreSQL (`auth.users`) cuando tiene `DATABASE_URL`:
 `POST http://localhost:4000/login` con clientes `demo@ecoairlines.test` / `EcoDemo2026`, `maria@ecoairlines.test` / `EcoMaria2026` y `luis@ecoairlines.test` / `EcoLuis2026`. Comparte con esta API la configuración por defecto
 (`AUTH_JWT_SECRET`, `AUTH_ISSUER`, `AUTH_AUDIENCE`); si se cambian aquí, hay que cambiarlas también allí. Ver `../ecoairlines-web/README.md`.
 
@@ -140,8 +152,10 @@ Se aplica en `src/app.setup.ts` (`configureApp`), que comparten `main.ts` y las 
 
 ## Datos de prueba (GDS simulado)
 
-Los gateways de EcoAirlines.DataManagement comparten un GDS en memoria (`../EcoAirlines.DataAccess/src/external/gds/`): búsqueda, holds, reservas, check-in y estado
-de vuelo ven los mismos vuelos, cupos y asientos. Todo se reinicia al reiniciar la API.
+Los gateways de EcoAirlines.DataManagement comparten un GDS simulado (`../EcoAirlines.DataAccess/src/external/gds/`): búsqueda, holds,
+reservas, check-in y estado de vuelo ven los mismos vuelos, cupos y asientos.
+- **Con `DATABASE_URL`:** el inventario (cupos y asientos asignados) se guarda en el esquema `gds` y sobrevive a los reinicios.
+- **Sin ella:** se reinicia con la API.
 
 - **Aerolínea ficticia:** EcoAirlines (`EA`). Aeropuertos: `UIO`, `GYE`, `CUE`, `BOG`, `MDE`, `LIM`, `SCL`, `MIA`, `MEX`, `MAD`.
 - **Horario generado automáticamente** (`../EcoAirlines.DataAccess/src/seed/timetable.ts`):
@@ -159,8 +173,10 @@ de vuelo ven los mismos vuelos, cupos y asientos. Todo se reinicia al reiniciar 
   - Cada avión tiene una base y un horario semanal: el mismo día de la semana hace siempre los mismos vuelos, durante las 13 semanas.
   - Cada vuelo de ida tiene su vuelta con el mismo avión; al cerrar la semana, cada avión está otra vez en su base.
   - Nunca hay un avión en dos lugares a la vez: sale de donde aterrizó, después de su tiempo en tierra (35–90 min según el tipo).
-  - Hoy son 149 aviones (26 A220, 56 A320neo y 67 787-9).
-  - El administrador lo ve en la página de observabilidad (`GET /admin/fleet-schedule`).
+  - La red base tiene 149 aviones (26 A220, 56 A320neo y 67 787-9).
+  - El administrador puede **crear, editar o dar de baja rutas** (`/admin/routes`) y **aviones** (`/admin/aircraft`) desde el panel.
+    Cada cambio reconstruye el horario con `buildTimetable` y se rechaza (`422`) si un avión quedaría en dos lugares.
+  - El administrador ve qué hace cada avión cada día en Observabilidad (`GET /admin/fleet-schedule`).
   - **Agregar una ruta a mano:** se da el origen, el destino, el día de la semana, la hora y el avión. `build()` rechaza el horario
     si un avión queda en dos lugares a la vez o no vuelve a su base:
 
@@ -191,7 +207,7 @@ de vuelo ven los mismos vuelos, cupos y asientos. Todo se reinicia al reiniciar 
 | Variable | Default | Efecto |
 |----------|---------|--------|
 | `ASYNC_PROCESSING_DELAY_MS` | `3000` | Demora de los procesos asíncronos simulados (pagos `async`) |
-| `DEV_AUTH_URL` | `http://localhost:4000` | URL de dev-auth para su documento en Swagger y la CSP de `/docs` (solo fuera de producción) |
+| `DEV_AUTH_URL` | `http://localhost:4000` | URL de dev-auth para su documento en Swagger y la CSP de `/docs` (https en producción) |
 | `WEBHOOK_DELIVERY` | `http` (`log` con `NODE_ENV=test`) | `http` entrega los eventos a las URLs suscritas (POST firmado con HMAC); `log` solo los registra |
 | `CHECK_IN_WINDOW_HOURS` | `48` | Apertura del check-in antes de la salida (cierra 60 min antes) |
 
@@ -209,7 +225,7 @@ de vuelo ven los mismos vuelos, cupos y asientos. Todo se reinicia al reiniciar 
 | Variable | Default | Efecto |
 |----------|---------|--------|
 | `HTTP_ACCESS_LOG` | `true` (`false` con `NODE_ENV=test`) | Activa el log de acceso |
-| `NODE_ENV` | — | `development`, `production` o `test`. Con `production`: Swagger apagado, HSTS, configuración de auth obligatoria |
+| `NODE_ENV` | — | `development`, `production` o `test`. Con `production`: Swagger apagado (salvo `SWAGGER_ENABLED=true`), HSTS y configuración de auth obligatoria |
 | `SWAGGER_ENABLED` | `true` fuera de producción, `false` con `NODE_ENV=production` | Publica `/docs` |
 | `PORT` | `3000` | Puerto; también define la URL del servidor local en Swagger |
 
@@ -234,13 +250,18 @@ Qué cubren las e2e (`test/`):
 | Archivo | Qué verifica |
 |---------|--------------|
 | `contract-conformance.e2e-spec.ts` | **Cada respuesta** de las 22 operaciones se valida contra el schema del contrato (status documentado, body, `Content-Type`). Exige cubrir todas las combinaciones operación + status del YAML, salvo las justificadas. Incluye expiraciones (hold `410`, cambio `410`, cotización, cutoff) con reloj adelantado y `429` |
-| `swagger.e2e-spec.ts` | `/docs` publica el contrato sin alterarlo; cada ruta del contrato tiene handler y no hay rutas fuera del contrato |
+| `swagger.e2e-spec.ts` | `/docs` publica el contrato sin alterarlo; cada ruta del contrato tiene handler; toda ruta propia está documentada en el anexo; el documento de dev-auth solo existe con el overlay |
 | `booking-flow.e2e-spec.ts` | Búsqueda → seat map → hold → reserva (201/202) → listado → check-in → pases → estado de vuelo, con sus errores |
 | `post-sale.e2e-spec.ts` | Maletas, cambio de fecha y cancelación |
 | `auth.e2e-spec.ts` | JWT (firma, scopes, token mock antiguo) y propiedad de holds y webhooks |
 | `security.e2e-spec.ts` | Cabeceras, CORS, `429`, límites de body, saneamiento, `additionalProperties: false` |
 | `observability.e2e-spec.ts` | `X-Request-Id` y `404` en formato ProblemDetails |
 | `audit-fixes.e2e-spec.ts` | Regresión de los hallazgos de la auditoría (AUD-002…013) |
+| `extensions.e2e-spec.ts` | Extensiones: perfil, cambio de asiento, panel de administración, vuelos por fecha/ruta, horario de la flota y observabilidad |
 | `admin-routes.e2e-spec.ts` | CRUD de rutas programadas: la búsqueda, la flota y el estado de vuelo ven el horario nuevo; validaciones y bloqueo con pasajeros |
 | `admin-fleet.e2e-spec.ts` | CRUD de la flota y rutas con aviones elegidos: tipo, base, alcance, superposición, aviones insuficientes y bloqueo de aviones en servicio |
 | `events.e2e-spec.ts` | Eventos y webhooks: firma HMAC, entrega solo al dueño, `flight.*` a todos, reintentos y `/admin/events` |
+| `persistence.e2e-spec.ts` | Solo con `TEST_DATABASE_URL`: crea datos, reinicia la API contra PostgreSQL y comprueba que reservas, asientos del GDS, rutas, flota, perfiles, webhooks y referencias de pago siguen ahí |
+
+Resultado actual: **174 unitarias** y **138 e2e** (con PostgreSQL). GitHub Actions las ejecuta antes de cada despliegue de la API
+(`../.github/workflows/deploy-api.yml`).

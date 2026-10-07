@@ -2,7 +2,7 @@
 
 ## 1. Para qué sirve este documento
 
-Antes de subir la API a la nube hay que demostrar que hace lo que promete el contrato `contract/vuelos-openapi.yaml`:
+Sirve para demostrar, en local o en la nube, que la API hace lo que promete el contrato `contract/vuelos-openapi.yaml`:
 
 1. **Que los flujos correctos funcionan:** buscar, bloquear un cupo, reservar, consultar, postventa, check-in y estado de vuelo.
 2. **Que los errores responden bien:** cuando se envía algo incorrecto, la API debe contestar con el **código HTTP correcto**
@@ -25,12 +25,13 @@ En este proyecto:
 
 | Elemento | Detalle |
 |----------|---------|
-| URL | **http://localhost:3000/docs** (la API debe estar levantada) |
+| URL | **En la nube:** https://ecoairlines-api-gv-fjfaa7b5geg3hphs.brazilsouth-01.azurewebsites.net/docs · **En local:** http://localhost:3000/docs (con la API levantada) |
 | Documento 1 | **"Contrato GDS Flight Core API"**: el YAML del contrato, **tal cual**, en `/docs/openapi.json`. Swagger no se genera desde el código, así que lo que se ve es exactamente lo acordado con el grupo |
-| Documento 2 | **"Extensiones EcoAirlines"**: endpoints propios fuera del contrato (perfil, cambio de asiento, administración), en `/docs/extensions.json`. Se elige en el selector de arriba a la derecha |
-| Servidor | En local aparece primero `http://localhost:3000`. Los servidores del contrato siguen en la lista, pero no existen todavía |
-| Autenticación | El contrato usa OAuth2, cuyo servidor de autorización no existe en local. Por eso, **solo en desarrollo**, se agrega el esquema **`DevBearer`**, donde se pega un JWT de prueba (sección 3.2). En memoria, sin tocar el archivo |
-| Producción | Con `NODE_ENV=production` Swagger se **apaga** (salvo `SWAGGER_ENABLED=true`). Al subir a la nube, `/docs` no debería estar público |
+| Documento 2 | **"Extensiones EcoAirlines"**: endpoints propios fuera del contrato (perfil, cambio de asiento, administración, rutas, flota, eventos, observabilidad), en `/docs/extensions.json`. Se elige en el selector de arriba a la derecha |
+| Documento 3 | **"dev-auth: login y registro"**: el servidor de autenticación (otro servicio). Sirve para registrarse o iniciar sesión y obtener el token sin salir de Swagger (sección 3.2) |
+| Servidor | Aparece primero la URL de esta API: la pública en la nube o `http://localhost:3000` en local. Los servidores del contrato siguen en la lista, pero no existen todavía |
+| Autenticación | El contrato usa OAuth2, cuyo servidor de autorización todavía no existe. Por eso se agrega el esquema **`DevBearer`**, donde se pega el JWT (sección 3.2). Se agrega en memoria, sin tocar el archivo del contrato |
+| Producción | Con `NODE_ENV=production` Swagger se **apaga** salvo `SWAGGER_ENABLED=true`. En Azure está encendido a propósito, para la evaluación, con `PUBLIC_API_URL` |
 
 Cada endpoint en Swagger muestra:
 - **Parameters:** path, query y headers (`Idempotency-Key`, `X-Device-Fingerprint`).
@@ -41,9 +42,14 @@ Cada endpoint en Swagger muestra:
 
 ## 3. Preparación
 
-### 3.1 Levantar la API
+### 3.1 Abrir Swagger
 
-Desde la raíz del repositorio (`Reto 1/`):
+**En la nube** no hay que levantar nada: abrir https://ecoairlines-api-gv-fjfaa7b5geg3hphs.brazilsouth-01.azurewebsites.net/docs.
+
+> En la nube los datos se guardan en **PostgreSQL**: las reservas, holds y webhooks que crees en las pruebas **quedan guardados**. Y
+> la prueba de `429` bloquea tu IP un minuto.
+
+**En local**, desde la raíz del repositorio (`Reto 1/`):
 
 ```bash
 npm install          # solo la primera vez
@@ -52,7 +58,7 @@ npm run start:dev    # compila y levanta la API en http://localhost:3000
 
 Abrir **http://localhost:3000/docs**.
 
-> Los datos viven **en memoria**: al reiniciar la API se borran las reservas, holds y webhooks. Para empezar desde cero, reiniciar.
+> En local, sin `DATABASE_URL`, los datos viven **en memoria**: al reiniciar la API se borran. Es útil para empezar desde cero.
 
 ### 3.2 Obtener un token (para los endpoints con candado 🔒)
 
@@ -66,8 +72,8 @@ npm run token -- --sub admin-1 --scopes ecoairlines:admin          # administrad
 ```
 
 **Opción B, sin terminal (desde el mismo Swagger):**
-1. En el selector de arriba, elegir **"dev-auth: login y registro"**. Es otro servicio (puerto 4000), que debe estar levantado
-   (`cd dev-auth && npm start`).
+1. En el selector de arriba, elegir **"dev-auth: login y registro"**. Es otro servicio: en la nube ya está en línea; en local debe
+   estar levantado (`cd dev-auth && npm start`, puerto 4000).
 2. Abrir `POST /login` → **Try it out**. El ejemplo ya trae `demo@ecoairlines.test` / `EcoDemo2026` (hay un ejemplo de administrador)
    → **Execute**:
    - credenciales correctas → `200` con `access_token`;
@@ -406,12 +412,12 @@ Swagger sirve para probar a mano y entender la API. Las pruebas automáticas rep
 ```bash
 npm run typecheck   # tipos
 npm run lint        # estilo y errores comunes
-npm test            # 173 pruebas unitarias + arquitectura
-npm run test:e2e    # 137 pruebas e2e contra la API completa
+npm test            # 174 pruebas unitarias + arquitectura
+npm run test:e2e    # 138 pruebas e2e contra la API completa (la de PostgreSQL necesita TEST_DATABASE_URL)
 ```
 
 `contract-conformance.e2e-spec.ts` valida **cada respuesta de las 22 operaciones contra el schema del contrato**, incluidos los 410 y 429.
-Si todo sale en verde, la API cumple el contrato. Resultado al 06/10: **173/173 unitarias y 137/137 e2e**.
+Si todo sale en verde, la API cumple el contrato. Resultado al 07/10: **174/174 unitarias y 138/138 e2e** (con PostgreSQL). GitHub Actions las ejecuta antes de cada despliegue de la API.
 
 ---
 
@@ -444,10 +450,11 @@ Copiar esta tabla y completarla al probar (✅ coincide, ❌ no coincide; en "No
 
 ## 10. Observaciones encontradas al preparar esta guía
 
-Para revisar antes de subir a la nube (no se corrigieron todavía):
+Estado al 07/10:
 
 | # | Observación | Impacto | Propuesta |
 |---|-------------|---------|-----------|
 | OBS-1 | `POST /webhooks` con `"url": "no-es-url"` responde `201`. El contrato pide `format: uri`. En producción la regla anti-SSRF exige `https` y host público, pero en desarrollo se acepta una URL sin esquema | Bajo en local; en producción ya se rechaza | ✅ **Resuelta (V1.K):** ahora exige `http://` o `https://` en todos los entornos y responde `400` |
 | OBS-2 | Las búsquedas con fecha pasada o con origen igual al destino responden `200` vacío en lugar de `400` | Bajo: el contrato no define el error | Decidir con el grupo si deben ser `400`; si sí, documentarlo en HALLAZGOS |
-| OBS-3 | Antes de subir a la nube: con `NODE_ENV=production` Swagger se apaga y la API exige un secreto JWT propio (≥ 32 caracteres) o un JWKS real, además de `AUTH_ISSUER` y `AUTH_AUDIENCE` | Si falta la configuración, la API no arranca | Preparar las variables de entorno del servidor (ver `EcoAirlines.API/README.md`) |
+| OBS-3 | Para la nube: con `NODE_ENV=production` Swagger se apaga y la API exige un secreto JWT propio (≥ 32 caracteres) o un JWKS real, además de `AUTH_ISSUER` y `AUTH_AUDIENCE` | Si falta la configuración, la API no arranca | ✅ **Resuelta (V1.M/V1.N):** variables configuradas en Azure, con `SWAGGER_ENABLED=true` y `PUBLIC_API_URL` (`DESPLIEGUE_AZURE.md`) |
+| OBS-4 | En Observabilidad aparecen `GET (sin ruta) 404` sin que nadie use la web | Ninguno | No es un error: son visitas a la raíz de la API o la sonda de arranque de Azure (`/robots933456.txt`). Comprobado el 07/10 con un `X-Request-Id` marcado |
